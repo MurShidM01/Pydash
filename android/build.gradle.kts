@@ -1,0 +1,5 @@
+// Top-level build file for Pydash (Pydrud)
+plugins {
+    id("com.android.application") version "8.13.2" apply false
+    id("com.chaquo.python") version "17.0.0" apply false
+}

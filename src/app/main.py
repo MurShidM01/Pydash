@@ -1,0 +1,52 @@
+"""
+Pydash — entry point.
+
+The starter app is the **Pydrud Native Playground**: a single screen of
+small, working demos (native Android services, Material components,
+reactive state and navigation), plus a second screen that shows stack
+navigation and back handling. The code lives in:
+
+    app/
+      config.py        app name, tagline, accent colour
+      state.py         the shared State objects
+      runtime.py       the router and the live App handle (refresh())
+      components/      reusable UI building blocks shared by screens
+      screens/         playground.py + details.py — one module per screen
+      jobs.py          background work (WorkManager)
+
+Edit a screen, then run ``pydrud run`` for interactive Flutter-style hot
+reload (press ``r`` for hot reload, ``R`` for hot restart).
+"""
+
+from pydrud import App, Theme
+
+from app.config import ACCENT, APP_NAME
+from app.jobs import JOBS, job, run_background_job   # noqa: F401 (Java entry)
+from app.runtime import bind, current, refresh, router
+from app.screens import details_screen, playground_screen
+
+# ── Routes ──────────────────────────────────────────────────────────────────
+
+router.define("playground", playground_screen)
+router.define("details", details_screen)
+router.initial("playground")
+
+
+def main(page):
+    """Build the current screen (called on startup and on every update)."""
+    router.build_root()(page)
+
+
+def start_app():
+    """Called by MainActivity via Chaquopy."""
+    Theme.seed(ACCENT)
+    app = bind(App(target=router.build_root(), title=APP_NAME))
+    app.attach_router(router)
+    # Deep links (pydash://details), launcher shortcuts and push
+    # notification taps all arrive here and are routed automatically.
+    app.on_deep_link(lambda url: print(f"[{APP_NAME}] link:", url))
+    app.run()
+
+
+__all__ = ["JOBS", "bind", "current", "job", "main", "refresh", "router",
+           "run_background_job", "start_app"]

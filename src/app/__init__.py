@@ -1,0 +1,18 @@
+"""Pydash — application package.
+
+The generated starter app is the **Pydrud Native Playground**: one screen
+of small, working demos that show what Pydrud can do, written so each
+piece is easy to find and change.
+
+Layout:
+
+* ``config``   — app name, tagline and the accent colour
+* ``state``    — the shared :class:`~pydrud.State` objects
+* ``runtime``  — the router and the running app (``refresh()`` lives here)
+* ``components`` — reusable UI building blocks shared by screens
+* ``screens``    — one module per screen (``playground``, ``details``)
+* ``jobs``     — background work run by WorkManager
+* ``main``     — route registration and the start-up entry point
+"""
+
+__version__ = "1.0.0"

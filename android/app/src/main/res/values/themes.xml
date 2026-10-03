@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Pydrud app theme — GENERATED, do not edit.
+
+    These colours come from the Python colour scheme (pydrud.toml
+    `[theme] seed`, or the Pydrud default) so native dialogs, the
+    text-selection handles, the overscroll glow and the system bars match
+    the widgets Pydrud draws itself. Change the seed and run
+    `pydrud sync`, or re-theme at runtime with Theme.seed(...) /
+    page.set_theme(...).
+-->
+<resources>
+    <style name="Theme.Pydash" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">#FF6366F1</item>
+        <item name="colorOnPrimary">#FFFFFFFF</item>
+        <item name="colorPrimaryContainer">#FFD8D9FC</item>
+        <item name="colorOnPrimaryContainer">#FF1F2937</item>
+        <item name="colorSecondary">#FFB969EB</item>
+        <item name="colorOnSecondary">#FFFFFFFF</item>
+        <item name="colorSurface">#FFFFFFFF</item>
+        <item name="colorOnSurface">#FF1F2937</item>
+        <item name="colorSurfaceVariant">#FFF3F4F6</item>
+        <item name="colorOnSurfaceVariant">#FF787E87</item>
+        <item name="colorOutline">#FFE5E7EB</item>
+        <item name="colorError">#FFEF4444</item>
+        <item name="android:colorBackground">#FFF7F8FA</item>
+        <item name="android:windowBackground">#FFF7F8FA</item>
+        <item name="android:textColorPrimary">#FF1F2937</item>
+        <item name="android:textColorSecondary">#FF787E87</item>
+        <item name="android:textColorHint">#FFA1A5AB</item>
+        <item name="android:windowLightStatusBar">true</item>
+
+        <!-- Splash screen (Android 12+): a clean, customisable surface that
+             follows the app theme instead of stamping the launcher icon in
+             the middle of the screen. Change the colour below (or re-seed
+             the theme and run `pydrud sync`) to brand it; swap the
+             transparent icon for a drawable if you *want* artwork there. -->
+        <item name="android:windowSplashScreenBackground">#FFF7F8FA</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
+
+        <!-- Edge-to-edge: Pydrud paints the bars itself and insets the UI. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+
+        <!-- Smooth screen transitions instead of the abrupt default. -->
+        <item name="android:windowAnimationStyle">@style/Animation.Pydash</item>
+        <item name="android:windowContentTransitions">true</item>
+    </style>
+
+    <style name="Animation.Pydash"
+           parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@android:anim/fade_in</item>
+        <item name="android:activityOpenExitAnimation">@android:anim/fade_out</item>
+        <item name="android:activityCloseEnterAnimation">@android:anim/fade_in</item>
+        <item name="android:activityCloseExitAnimation">@android:anim/fade_out</item>
+    </style>
+</resources>

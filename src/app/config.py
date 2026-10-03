@@ -1,0 +1,13 @@
+"""App-wide constants. Change a value, save, and hot reload does the rest."""
+
+#: Display name, used in the app bar and the hero card.
+APP_NAME = "Pydash"
+APP_VERSION = "1.0.0"
+
+#: The playground's subtitle — replace it with your own tagline.
+APP_TAGLINE = "Native Android, powered by Python"
+
+#: The brand colour the whole design system is generated from. It matches
+#: the seed in ``pydrud.toml``; call ``page.set_theme(...)`` to re-theme
+#: the running app at any time.
+ACCENT = "#FF6366F1"

@@ -1,0 +1,84 @@
+# Pydash
+
+A native Android app written in Python with
+[Pydrud](https://github.com/MurShidM01/Pydrud) 2.0.2.
+
+The starter app is the **Pydrud Native Playground** — a single, polished
+screen of small working demos (native Toasts, Snackbars, dialogs, haptics,
+clipboard, share, permissions; Material components; reactive state; stack
+navigation) so you can see everything Pydrud does the moment the app
+launches. Open `src/app/screens/playground.py` and start editing.
+
+## Run it
+
+```bash
+pydrud dev              # host Python + LAN live-preview QR (requires a Pydash client)
+pydrud run              # build, install, launch with Flutter-style Hot Reload (r/R)
+python run.py           # headless: build the widget tree on your computer
+pydrud test             # run the tests in tests/
+```
+
+`pydrud dev` and `pydrud run` are separate workflows: preview never builds an
+APK, while `run` uses the generated Android app and embedded Python runtime.
+
+## Project layout
+
+```
+Pydash/
+├── run.py                  dev runner (headless / bridge client)
+├── pydrud.yaml             SDK, NDK, package name, versions
+├── pydrud.toml             Python packages bundled into the APK
+├── assets/                 images and fonts shipped with the app
+├── android/                the generated native layer — `pydrud sync` refreshes it
+├── tests/                  app tests driven by pydrud.testing.AppTester
+└── src/
+    ├── pydrud_config.py    runtime configuration for the device
+    └── app/
+        ├── main.py         route registration + start-up entry point
+        ├── config.py       app name, tagline, accent colour
+        ├── state.py        the State objects every screen shares
+        ├── runtime.py      the router and the live App handle (`refresh()`)
+        ├── jobs.py         background work (WorkManager)
+        ├── ui.py           compatibility imports for older generated apps
+        ├── components/     reusable UI shared by multiple screens
+        │   └── common.py   sections, demo buttons and page layout
+        └── screens/        one module per screen
+            ├── playground.py   the Pydrud Native Playground
+            └── details.py      the pushed screen (navigation demo)
+```
+
+## Add a screen
+
+1. Create `src/app/screens/profile.py` with a `profile_screen(page)` function.
+2. Export it from `src/app/screens/__init__.py`.
+3. Register it in `src/app/main.py`: `router.define("profile", profile_screen)`.
+4. Navigate to it from any handler with `router.push("profile")`.
+
+## Android configuration
+
+`pydrud.yaml` is the source of truth for the generated Android project:
+app/package identity, release version, SDK/NDK/toolchain versions, ABIs,
+assets, permissions, capabilities and deep links. Edit it and run
+`pydrud sync`. Keep Python packages and the theme seed in `pydrud.toml`; app
+code under `src/app/` is never overwritten by sync.
+
+The playground enables `haptics` and `notifications` in `pydrud.yaml` so the
+Vibrate and Permission buttons work immediately. For your own features, prefer
+Python-first commands such as `pydrud capabilities add haptics` and
+`pydrud permissions add camera`; never hand-edit generated Android files.
+
+## Useful commands
+
+Pydrud commands share the Hot Reload runner's terminal UI: clear phases,
+status badges, summaries and next-step hints.
+
+| Command | What it does |
+| --- | --- |
+| `pydrud dev` | run Python locally and wait for an authenticated Pydash preview client |
+| `pydrud sync` | apply `pydrud.yaml` and regenerate managed Android files |
+| `pydrud analyze` | static checks on your Python UI code |
+| `pydrud pip add requests` | bundle a Python package into the APK |
+| `pydrud permissions add camera` | add a permission to the manifest |
+| `pydrud capabilities add haptics` | enable generated feature bundles |
+| `pydrud build --release` | signed release build |
+| `pydrud doctor` | check your toolchain |

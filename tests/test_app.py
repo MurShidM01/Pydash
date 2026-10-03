@@ -1,0 +1,39 @@
+"""Tests for Pydash.
+
+``AppTester`` boots the app against a fake device, so these run anywhere —
+no emulator, no Gradle. Run them with ``pydrud test`` or ``pytest``.
+"""
+
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+
+from pydrud.testing import AppTester  # noqa: E402
+
+from app.main import main  # noqa: E402
+
+
+class TestApp(unittest.TestCase):
+    def setUp(self):
+        self.app = AppTester(main, title="Pydash").start()
+
+    def tearDown(self):
+        self.app.stop()
+
+    def test_playground_renders(self):
+        self.assertTrue(self.app.shows("Pydrud Native Playground"))
+
+    def test_counter_increments(self):
+        self.app.tap("inc_btn")
+        self.assertEqual(self.app.prop("counter_value", "value"), "1")
+
+    def test_typing_a_name_updates_the_greeting(self):
+        self.app.type_in("name_input", "Ada")
+        self.assertEqual(self.app.prop("greeting", "value"), "Hello, Ada!")
+
+
+if __name__ == "__main__":
+    unittest.main()
