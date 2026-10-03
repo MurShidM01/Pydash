@@ -48,13 +48,13 @@ class Cache:
         self.hits = 0
         self.misses = 0
 
-    # ── core API ─────────────────────────────────────────────────────────
+                                                                           
 
     def set(self, key: str, value: Any, *, ttl: Optional[float] = None) -> Any:
         """Store *value* (JSON-serialisable or bytes). Returns the value."""
         ttl = self.default_ttl if ttl is None else ttl
-        # ``ttl=0`` means "expire immediately", not "never expire", so the
-        # expiry is computed whenever a ttl was given at all.
+                                                                          
+                                                             
         expires = None if ttl is None else time.time() + float(ttl)
         is_bytes = isinstance(value, (bytes, bytearray))
         payload = bytes(value) if is_bytes else json.dumps(value).encode()
@@ -143,7 +143,7 @@ class Cache:
                 self._save_index()
             return len(stale)
 
-    # ── introspection ────────────────────────────────────────────────────
+                                                                           
 
     def keys(self) -> list[str]:
         with self._lock:
@@ -168,7 +168,7 @@ class Cache:
                 "hits": self.hits, "misses": self.misses,
                 "directory": self.directory}
 
-    # ── internals ────────────────────────────────────────────────────────
+                                                                           
 
     def _path_for(self, key: str) -> str:
         digest = hashlib.sha1(key.encode()).hexdigest()[:20]
@@ -185,7 +185,7 @@ class Cache:
     def _evict_if_needed(self) -> None:
         if self.size <= self.max_bytes:
             return
-        # Least-recently-used first.
+                                    
         for key, _ in sorted(self._index.items(),
                              key=lambda kv: kv[1].get("used") or 0):
             self._remove(key)

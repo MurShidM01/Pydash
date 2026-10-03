@@ -24,7 +24,7 @@ except ImportError:
 
 _EXTENSIONS = (".py",)
 
-#: Directories that never need watching.
+                                        
 _IGNORED_DIRS = {"__pycache__", ".git", ".venv", "venv", "build", "dist", ".idea"}
 
 
@@ -171,8 +171,8 @@ class FileWatcher:
                     except OSError:
                         continue
                     last = self._mtimes.get(fpath, 0)
-                    # After the first scan, an unseen file is a *new* module
-                    # and must trigger a reload just like an edited one.
+                                                                            
+                                                                        
                     if (mtime > last) if self._scanned else (last > 0 and mtime > last):
                         now = time.time()
                         if now - self._last_fired.get(fpath, 0) > self.debounce:

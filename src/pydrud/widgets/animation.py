@@ -24,7 +24,7 @@ from typing import Any, Callable, Optional, Union
 
 from pydrud.widgets.base import Widget
 
-#: Interpolators supported by the Android renderer.
+                                                   
 CURVES = (
     "linear",
     "ease_in",
@@ -63,7 +63,7 @@ class Animation:
             d["reverse"] = True
         return d
 
-    # Handy presets -------------------------------------------------------
+                                                                           
 
     @classmethod
     def fast(cls) -> "Animation":
@@ -303,6 +303,6 @@ def animate(widget: Widget, animation: Union[Animation, int, dict, None] = None,
     return widget
 
 
-# Make it available as a method on every widget — ergonomics matter.
-Widget.animate = lambda self, animation=None, **props: animate(  # type: ignore[attr-defined]
+                                                                    
+Widget.animate = lambda self, animation=None, **props: animate(                              
     self, animation, **props)

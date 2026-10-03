@@ -10,19 +10,20 @@ patches that item instead of re-creating everything after it.
 """
 
 from __future__ import annotations
+import hashlib
 import json
 from typing import Any, Optional
 
 from pydrud.widgets.base import Widget, validate_tree_keys
 
 
-# ── Diff result types ────────────────────────────────────────────────────────
+                                                                               
 
 
 class Patch:
     """A single mutation to apply to the native view tree."""
 
-    #: Valid operations.
+                        
     OPS = ("create", "update", "delete", "move", "replace")
 
     def __init__(self, op: str, key: str, *, parent_key: str = "", **data: Any):
@@ -65,7 +66,7 @@ class Patch:
         return f"Patch({self.op}, {self.key})"
 
 
-# ── Public API ───────────────────────────────────────────────────────────────
+                                                                               
 
 
 class TreeDiff:
@@ -92,7 +93,7 @@ class TreeDiff:
         return json.dumps([p.to_dict() for p in patches], default=str)
 
 
-# ── Internal helpers ─────────────────────────────────────────────────────────
+                                                                               
 
 
 def _diff_node(
@@ -108,21 +109,21 @@ def _diff_node(
     if old is not None:
         old = old.unwrap()
     if old is None:
-        # Entirely new subtree — include the full JSON tree.
+                                                            
         patches.append(
             Patch("create", new.key, parent_key=parent_key, index=index, tree=new.to_dict())
         )
         return
 
     if old._widget_type != new._widget_type or old.key != new.key:
-        # Different widget identity — replace the whole subtree.
+                                                                
         patches.append(
             Patch("replace", old.key, parent_key=parent_key, index=index,
                   new_key=new.key, tree=new.to_dict())
         )
         return
 
-    # Same type and key: check for property changes.
+                                                    
     changed_props = _changed_props(old, new)
     changed_style = _changed_dict(old.style, new.style)
 
@@ -134,7 +135,7 @@ def _diff_node(
             patch_data["style"] = changed_style
         patches.append(Patch("update", new.key, parent_key=parent_key, **patch_data))
 
-    # Walk children.
+                    
     _diff_children(old.children, new.children, patches, parent_key=new.key)
 
 
@@ -162,18 +163,19 @@ def _diff_children(
     """
     old_list = [w.unwrap() for w in old_list]
     new_list = [w.unwrap() for w in new_list]
+    _preserve_keyless_identities(old_list, new_list, parent_key)
     old_by_key = _index_unique(old_list, parent_key)
     new_by_key = _index_unique(new_list, parent_key)
 
-    # 1. Deletions (old children that disappeared).
+                                                   
     for widget in old_list:
         if widget.key not in new_by_key:
             patches.append(Patch("delete", widget.key, parent_key=parent_key))
 
-    # The order the native side is left in once the deletions are applied.
+                                                                          
     order = [w.key for w in old_list if w.key in new_by_key]
 
-    # 2. Creations / moves / updates, left to right.
+                                                    
     for index, new_w in enumerate(new_list):
         old_w = old_by_key.get(new_w.key)
         if old_w is None:
@@ -191,9 +193,83 @@ def _diff_children(
             )
             order.pop(current)
             order.insert(index, new_w.key)
-        # ``replace`` keeps the view at its current position, so the move
-        # above must happen first — hence diffing the node last.
+                                                                         
+                                                                
         _diff_node(old_w, new_w, patches, parent_key=parent_key, index=index)
+
+
+def _preserve_keyless_identities(
+    old_list: list[Widget], new_list: list[Widget], parent_key: str,
+) -> None:
+    """Give recognisable keyless survivors their previous native identity.
+
+    ``assign_stable_keys`` correctly makes a static keyless layout stable, but
+    its structural keys cannot tell that ``Text("B")`` moved from position 1
+    to position 0.  On a reorder that used to turn a focused field or a
+    scrolled native widget into a replacement.  Explicit user keys always win;
+    only auto-generated siblings with a unique rendered fingerprint are
+    remapped. Ambiguous duplicates deliberately keep positional semantics.
+    """
+    old_candidates: dict[str, list[Widget]] = {}
+    new_candidates: dict[str, list[Widget]] = {}
+    for widget in old_list:
+        if getattr(widget, "_auto_key", False):
+            old_candidates.setdefault(_keyless_fingerprint(widget), []).append(widget)
+    for widget in new_list:
+        if getattr(widget, "_auto_key", False):
+            new_candidates.setdefault(_keyless_fingerprint(widget), []).append(widget)
+
+    used: set[str] = set()
+    matched: set[int] = set()
+    for fingerprint, fresh in new_candidates.items():
+        previous = old_candidates.get(fingerprint, [])
+                                                                        
+                                                                              
+                                                             
+        if len(previous) == len(fresh) == 1:
+            fresh[0].key = previous[0].key
+            used.add(previous[0].key)
+            matched.add(id(fresh[0]))
+
+    occupied = {w.key for w in new_list if not getattr(w, "_auto_key", False)} | used
+    for ordinal, widget in enumerate(new_list):
+        if (not getattr(widget, "_auto_key", False)
+                or id(widget) in matched
+                or widget.key not in occupied):
+            occupied.add(widget.key)
+            continue
+                                                                             
+                                                                             
+                                                                             
+        digest = hashlib.sha1(
+            f"{parent_key}|{_keyless_fingerprint(widget)}|{ordinal}".encode("utf-8")
+        ).hexdigest()[:10]
+        base = f"{parent_key or 'root'}._auto_{digest}_{widget._widget_type}"
+        key, suffix = base, 2
+        while key in occupied:
+            key = f"{base}_{suffix}"
+            suffix += 1
+        widget.key = key
+        occupied.add(key)
+
+
+def _keyless_fingerprint(widget: Widget) -> str:
+    """A conservative content signature used only for keyless matching."""
+    try:
+        payload = {
+            "type": widget._widget_type,
+            "props": widget._serialise_props(),
+            "style": widget.style,
+            "expand": widget.expand,
+            "visible": widget.visible,
+            "tooltip": widget.tooltip,
+        }
+        return json.dumps(payload, sort_keys=True, default=str,
+                          separators=(",", ":"))
+    except Exception:
+                                                                            
+                                                                          
+        return f"{widget._widget_type}:{id(widget)}"
 
 
 def _changed_props(old: Widget, new: Widget) -> dict:
@@ -207,7 +283,7 @@ def _changed_props(old: Widget, new: Widget) -> dict:
         if old_p.get(k) != new_p.get(k):
             changed[k] = new_p.get(k)
 
-    # Event handler presence (names only — callables are not serialisable).
+                                                                           
     old_events = sorted(old.event_handlers.keys())
     new_events = sorted(new.event_handlers.keys())
     if old_events != new_events:

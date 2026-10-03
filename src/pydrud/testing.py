@@ -53,7 +53,7 @@ class RenderedNode:
         for child in self.children:
             child.parent = self
 
-    # ── queries ───────────────────────────────────────────────────────────
+                                                                            
 
     def walk(self):
         yield self
@@ -104,8 +104,8 @@ class FakeDevice:
         self.commands: list[dict] = []
         self.patch_batches: list[list[dict]] = []
         self.full_renders = 0
-        #: Event lines written to the app. Harnesses compare this with the
-        #: app's handled count so they can wait for events still in flight.
+                                                                          
+                                                                           
         self.events_sent = 0
 
         self._conn: Optional[socket.socket] = None
@@ -114,11 +114,11 @@ class FakeDevice:
         self._lock = threading.Lock()
         self._connected = threading.Event()
         self._activity_finished = False
-        #: Canned answers for native service calls: {cmd: value|callable}.
+                                                                          
         self.responders: dict[str, Any] = {}
         self.requests: list[dict] = []
 
-    # ── lifecycle ─────────────────────────────────────────────────────────
+                                                                            
 
     def start(self) -> "FakeDevice":
         self._running = True
@@ -144,14 +144,14 @@ class FakeDevice:
     def __exit__(self, *exc) -> None:
         self.stop()
 
-    def __del__(self) -> None:  # pragma: no cover - interpreter shutdown
+    def __del__(self) -> None:                                           
         """Close the listening socket even if ``stop()`` was never called."""
         try:
             self.stop()
         except Exception:
             pass
 
-    # ── server loop ───────────────────────────────────────────────────────
+                                                                            
 
     def _serve(self) -> None:
         try:
@@ -194,9 +194,9 @@ class FakeDevice:
                 for patch in patches:
                     self._apply_patch(patch)
             elif cmd == "render_transaction":
-                # Mirror the production BridgeService transaction contract:
-                # apply atomically, then ACK the exact revision so Python can
-                # advance its confirmed snapshot.
+                                                                           
+                                                                             
+                                                 
                 kind = msg.get("kind", "")
                 if kind == "snapshot":
                     self.root = RenderedNode(msg["tree"])
@@ -216,7 +216,7 @@ class FakeDevice:
             self.requests.append(msg)
             self._auto_respond(msg, request_id)
 
-    # ── native service emulation ─────────────────────────────────────────
+                                                                           
 
     def _send_event_ack(self, message: dict) -> None:
         self._send({
@@ -240,7 +240,7 @@ class FakeDevice:
         answer = self.responders[cmd]
         try:
             value = answer(msg) if callable(answer) else answer
-        except Exception as exc:  # pragma: no cover - responder bug
+        except Exception as exc:                                    
             self.respond_error(request_id, str(exc))
             return
         self.respond(request_id, value)
@@ -260,7 +260,7 @@ class FakeDevice:
                 return msg
         return None
 
-    # ── patch application (mirrors ViewFactory.applyPatch) ────────────────
+                                                                            
 
     def _apply_patch(self, patch: dict) -> None:
         if self.root is None:
@@ -321,7 +321,7 @@ class FakeDevice:
                 parent.children.append(new_node)
                 new_node.parent = parent
 
-    # ── outgoing events ───────────────────────────────────────────────────
+                                                                            
 
     def _send(self, payload: dict) -> None:
         if self._conn is None:
@@ -442,7 +442,7 @@ class FakeDevice:
                         {"callback_id": callback_id, "action": actioned})
         return True
 
-    # ── helpers for tests ─────────────────────────────────────────────────
+                                                                            
 
     def wait_connected(self, timeout: float = 5.0) -> bool:
         return self._connected.wait(timeout)
@@ -475,7 +475,7 @@ class FakeDevice:
             raise AssertionError(
                 f"no {cmd!r} request; saw "
                 f"{[m.get('cmd') for m in self.requests]}")
-        return self.last_request(cmd)  # type: ignore[return-value]
+        return self.last_request(cmd)                              
 
     def commands_named(self, cmd: str) -> list[dict]:
         return [c for c in self.commands if c.get("cmd") == cmd]
@@ -543,7 +543,7 @@ class AppTester:
         self.app = app
         self._thread: Optional[threading.Thread] = None
 
-    # ── lifecycle ────────────────────────────────────────────────────────
+                                                                           
 
     def start(self) -> "AppTester":
         self.device.start()
@@ -563,7 +563,7 @@ class AppTester:
     def __exit__(self, *exc) -> None:
         self.stop()
 
-    # ── interactions ─────────────────────────────────────────────────────
+                                                                           
 
     def tap(self, key_or_text: str) -> "AppTester":
         """Tap a widget by key, or by the text it displays."""
@@ -633,13 +633,13 @@ class AppTester:
         app = self.app
         if app._events_handled < target or not app._event_queue.empty():
             return False
-        # A handler may have requested a render that the device has not
-        # applied yet; waiting for it is what makes `prop()` reliable
-        # immediately after `tap()`.
-        return not getattr(app, "_render_pending", False) \
+                                                                       
+                                                                     
+                                    
+        return not getattr(app, "_render_pending", False)\
             and not getattr(app, "_inflight", None)
 
-    # ── assertions / queries ─────────────────────────────────────────────
+                                                                           
 
     def shows(self, text: str, timeout: float = 1.0) -> bool:
         return self.device.wait_for_text(text, timeout)
@@ -660,7 +660,7 @@ class AppTester:
         return default if node is None else node.props.get(name, default)
 
     def count(self, widget_type: str) -> int:
-        return len(self.device.root.find_by_type(widget_type)) \
+        return len(self.device.root.find_by_type(widget_type))\
             if self.device.root else 0
 
     def requested(self, cmd: str, timeout: float = 1.0) -> dict:

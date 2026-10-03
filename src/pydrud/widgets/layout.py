@@ -35,12 +35,12 @@ class Container(Widget):
     ):
         super().__init__(key=key, style=style, expand=expand, visible=visible, **kwargs)
 
-        # Accept both `child` and `content` for ergonomics.
+                                                           
         actual_child = child if child is not None else content
         if actual_child is not None:
             self.children = [actual_child]
 
-        # Apply inline convenience args into style.
+                                                   
         s = Style()
         if padding is not None:
             s.padding(padding if isinstance(padding, EdgeInsets) else EdgeInsets.all(padding) if isinstance(padding, (int, float)) else EdgeInsets(**padding))
@@ -380,8 +380,8 @@ class Card(Widget):
         actual_child = child if child is not None else content
         if actual_child is not None:
             self.children = [actual_child]
-        # Defaults come from the design tokens, so Theme.configure(
-        # radius_card=…) restyles every card in the app.
+                                                                   
+                                                        
         if elevation is None:
             elevation = Tokens.elevation_card
         if border_radius is None:
@@ -396,8 +396,8 @@ class Card(Widget):
             "margin": _edge_dict(margin),
             "width": "match",
         }
-        # A hairline reads as "card" without the muddy shadow; skip it
-        # when the card is deliberately raised.
+                                                                      
+                                               
         if outlined is None:
             outlined = elevation <= 0
         if outlined:

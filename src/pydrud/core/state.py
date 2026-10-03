@@ -27,9 +27,9 @@ class State(Generic[T]):
         self._value: T = initial
         self._watchers: list[tuple[Callable[[T, T], None], Optional[Callable]]] = []
         self.distinct = bool(distinct)
-        #: Optional label. Naming a State lets stateful hot reload match it
-        #: to its replacement after a module is reloaded, even if the order
-        #: of declarations in the file changed.
+                                                                           
+                                                                           
+                                               
         self.name: str = name
 
     @property
@@ -87,7 +87,7 @@ class ReactiveDict:
 
     def __init__(self, initial: dict[str, Any] | None = None):
         self._data: dict[str, Any] = {}
-        self.changed = State(0)  # increment counter
+        self.changed = State(0)                     
         if initial:
             for k, v in initial.items():
                 self._data[k] = v

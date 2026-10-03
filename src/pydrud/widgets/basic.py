@@ -89,7 +89,7 @@ class Button(Widget):
         variant: str = "filled",
         color: Optional[str] = None,
         bg_color: Optional[str] = None,
-        size: Optional[str] = None,  # "sm", "md", "lg"
+        size: Optional[str] = None,                    
         pill: bool = False,
         full_width: bool = False,
         disabled: bool = False,
@@ -193,6 +193,16 @@ class TextField(Widget):
 
     ``icon`` shows a leading glyph and ``accent`` overrides the focus
     colour; everything else follows :class:`pydrud.Theme`.
+
+    ``ime_action`` (``"done"``, ``"search"``, ``"send"``, ``"go"``,
+    ``"next"``, ``"previous"``) picks the keyboard action button, and
+    ``on_submit`` fires when the user presses it::
+
+        TextField(hint="Search", ime_action="search",
+                  on_submit=lambda e: run_search(e.data["value"]))
+
+    The keyboard also dismisses itself when the user taps anywhere outside
+    the field or presses the submit action.
     """
 
     _widget_type = "TextField"
@@ -207,8 +217,9 @@ class TextField(Widget):
         max_lines: Optional[int] = None,
         password: bool = False,
         read_only: bool = False,
-        keyboard: Optional[str] = None,  # "text", "number", "email", "phone", "url"
-        variant: str = "filled",         # "filled" | "outlined"
+        keyboard: Optional[str] = None,                                             
+        ime_action: Optional[str] = None,                                                      
+        variant: str = "filled",                                
         icon: Optional[str] = None,
         accent: Optional[str] = None,
         key: Optional[str] = None,
@@ -237,6 +248,8 @@ class TextField(Widget):
             self.style["readOnly"] = True
         if keyboard:
             self.style["keyboard"] = keyboard
+        if ime_action:
+            self.style["ime"] = ime_action
 
     @property
     def value(self) -> str:
@@ -262,6 +275,7 @@ class SearchField(TextField):
         kwargs.setdefault("hint", "Search")
         kwargs.setdefault("keyboard", "text")
         kwargs.setdefault("icon", "search")
+        kwargs.setdefault("ime_action", "search")
         super().__init__(value, **kwargs)
 
 
@@ -318,7 +332,7 @@ class Image(Widget):
         self,
         src: str = "",
         *,
-        fit: Optional[str] = None,   # "cover", "contain", "fill", "fitWidth", "fitHeight", "none"
+        fit: Optional[str] = None,                                                                
         width: Optional[Union[float, str]] = None,
         height: Optional[Union[float, str]] = None,
         border_radius: Optional[float] = None,
@@ -349,6 +363,21 @@ class Image(Widget):
 
     def _serialise_props(self) -> dict:
         return {"src": self._src}
+
+
+class SvgPicture(Image):
+    """An SVG image from assets or HTTPS.
+
+    ``Image(src="logo.svg")`` automatically takes the same vector path; this
+    named form makes a vector asset explicit and catches accidental bitmap
+    filenames before they reach Android.
+    """
+
+    def __init__(self, src: str, **kwargs):
+        clean = str(src).split("?", 1)[0].split("#", 1)[0].lower()
+        if not clean.endswith(".svg"):
+            raise ValueError("SvgPicture src must end in .svg")
+        super().__init__(src, **kwargs)
 
 
 class Icon(Widget):
@@ -519,8 +548,8 @@ class Slider(Widget):
         self,
         value: float = 0,
         *,
-        min: float = 0,          # noqa: A002
-        max: float = 100,        # noqa: A002
+        min: float = 0,                      
+        max: float = 100,                    
         divisions: Optional[int] = None,
         color: Optional[str] = None,
         key: Optional[str] = None,

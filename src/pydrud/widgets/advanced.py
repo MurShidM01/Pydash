@@ -19,9 +19,9 @@ def _clean(d: dict) -> dict:
     return {k: v for k, v in d.items() if v is not None}
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Camera
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+        
+                                                                            
 
 
 class CameraPreview(Widget):
@@ -35,7 +35,10 @@ class CameraPreview(Widget):
 
         page.camera.capture(key="cam").then(lambda path: upload(path))
 
-    Requires the ``camera`` permission — request it before mounting.
+    By default Pydrud requests the ``camera`` permission when the preview is
+    mounted. Set ``auto_request_permission=False`` to own that flow yourself;
+    supply ``fallback=...`` for a denial/unavailable state. CameraX failures
+    (including a busy or missing camera) arrive at ``on_error``.
     """
 
     _widget_type = "CameraPreview"
@@ -52,6 +55,10 @@ class CameraPreview(Widget):
         scan: bool = False,
         scan_formats: Optional[Sequence[str]] = None,
         aspect_ratio: Optional[str] = None,
+        auto_request_permission: bool = True,
+        fallback: Optional[Widget] = None,
+        scan_overlay: bool = False,
+        height: Union[int, float] = 320,
         on_scan: Optional[Callable] = None,
         on_ready: Optional[Callable] = None,
         on_error: Optional[Callable] = None,
@@ -64,6 +71,8 @@ class CameraPreview(Widget):
             raise ValueError(f"fit must be one of {self.FITS}")
         if flash not in ("on", "off", "auto", "torch"):
             raise ValueError("flash must be on/off/auto/torch")
+        if fallback is not None and not isinstance(fallback, Widget):
+            raise TypeError("fallback must be a Widget or None")
         super().__init__(key=key, on_scan=on_scan, on_ready=on_ready,
                          on_error=on_error, **kwargs)
         self.facing = facing
@@ -71,10 +80,17 @@ class CameraPreview(Widget):
         self.flash = flash
         self.torch = bool(torch)
         self.scan = bool(scan) or on_scan is not None
-        self.scan_formats = [str(f) for f in (scan_formats or [])]
+        self.scan_formats = [str(f).upper() for f in (scan_formats or [])]
         self.aspect_ratio = aspect_ratio
+        self.auto_request_permission = bool(auto_request_permission)
+        self.fallback = fallback
+        self.scan_overlay = bool(scan_overlay)
+                                                                          
+                                                                             
+                                                                        
+        self.children = [fallback] if fallback is not None else []
         self.style.setdefault("width", "match")
-        self.style.setdefault("height", kwargs.pop("height", 320))
+        self.style.setdefault("height", height)
 
     def _serialise_props(self) -> dict:
         props = dict(self._extra)
@@ -86,13 +102,50 @@ class CameraPreview(Widget):
             "scan": self.scan or None,
             "scanFormats": self.scan_formats or None,
             "aspectRatio": self.aspect_ratio,
+            "autoRequestPermission": self.auto_request_permission,
+            "fallbackKey": self.fallback.key if self.fallback is not None else None,
+            "scanOverlay": self.scan_overlay or None,
         }))
         return props
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Maps
-# ──────────────────────────────────────────────────────────────────────────
+class QRScanner(CameraPreview):
+    """CameraX + ML Kit QR scanner with a native focus-frame overlay.
+
+    This is the small, production-ready convenience layer over
+    :class:`CameraPreview`: it enables camera permission handling, QR-only
+    decoding and the visual scanner frame while retaining ``on_ready`` and
+    ``on_error`` hooks::
+
+        QRScanner(on_scan=lambda event: redeem(event.data["value"]))
+
+    Pass ``formats=["QR_CODE", "EAN_13"]`` when the scanner should accept
+    additional barcode formats.
+    """
+
+    def __init__(
+        self,
+        *,
+        formats: Optional[Sequence[str]] = None,
+        on_scan: Optional[Callable] = None,
+        **kwargs,
+    ):
+        if "scan" in kwargs:
+            raise TypeError("QRScanner always enables scanning; omit scan=")
+        if "scan_formats" in kwargs:
+            raise TypeError("Use formats= with QRScanner")
+        super().__init__(
+            scan=True,
+            scan_formats=list(formats or ["QR_CODE"]),
+            scan_overlay=True,
+            on_scan=on_scan,
+            **kwargs,
+        )
+
+
+                                                                            
+      
+                                                                            
 
 
 class Marker:
@@ -198,9 +251,9 @@ class MapView(Widget):
         return props
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Rich text
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+           
+                                                                            
 
 
 class Span:
@@ -339,7 +392,7 @@ class Markdown(Widget):
         self.link_color = link_color
         self.selectable = bool(selectable)
 
-    # ── parsing ──────────────────────────────────────────────────────────
+                                                                           
 
     def blocks(self) -> list[dict]:
         """The parsed document: a list of ``{"kind", ...}`` blocks."""
@@ -411,7 +464,7 @@ class Markdown(Widget):
 
             paragraph = [stripped]
             index += 1
-            while index < len(lines) and lines[index].strip() and \
+            while index < len(lines) and lines[index].strip() and\
                     not re.match(r"^(#|>|```|[-*+]\s|\d+[.)]\s)",
                                  lines[index].strip()):
                 paragraph.append(lines[index].strip())
@@ -434,7 +487,7 @@ class Markdown(Widget):
             elif part.startswith("`") and part.endswith("`"):
                 spans.append(Span(part[1:-1], mono=True,
                                   bg=self.code_bg).to_dict())
-            elif (part.startswith("*") and part.endswith("*")) or \
+            elif (part.startswith("*") and part.endswith("*")) or\
                     (part.startswith("_") and part.endswith("_")):
                 spans.append(Span(part[1:-1], italic=True).to_dict())
             elif part.startswith("[") and part.endswith(")"):
@@ -472,9 +525,9 @@ class Markdown(Widget):
         return props
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# High-performance lists
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+                        
+                                                                            
 
 
 class ReorderableList(Widget):
@@ -572,8 +625,8 @@ class InfiniteList(Widget):
                 raise TypeError("InfiniteList children must be widgets")
         self.total = len(rows)
         self.window = int(window)
-        # Virtualisation: only the first *window* rows cross the bridge; the
-        # rest arrive as the user scrolls and the app appends more.
+                                                                            
+                                                                   
         self.children = rows[: self.window]
         self.truncated = self.total > self.window
         self.has_more = bool(has_more) or self.truncated

@@ -32,7 +32,7 @@ class RenderTransaction:
     tx_id: str
     revision: int
     base_revision: int
-    kind: str  # patch | snapshot
+    kind: str                    
     payload: dict[str, Any]
     created_at: float
 

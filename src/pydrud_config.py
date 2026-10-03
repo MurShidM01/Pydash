@@ -9,7 +9,7 @@ PACKAGE = "com.pydrud.pydash"
 VERSION = "1.0.0"
 VERSION_CODE = 1
 ASSETS_DIR = "assets"
-PERMISSIONS = []
+PERMISSIONS = ["CAMERA"]
 CAPABILITIES = ["haptics", "notifications"]
 
 # ── Android SDK ──────────────────────────────────────────────────────────────

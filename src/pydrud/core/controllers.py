@@ -24,7 +24,7 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
-#: Easing functions, matching the names used by the Android renderer.
+                                                                     
 CURVES: dict[str, Callable[[float], float]] = {
     "linear": lambda t: t,
     "ease_in": lambda t: t * t,
@@ -87,10 +87,10 @@ class AnimationController:
         self._runner = runner
         self._on_ui = on_ui
         self._value = self.lower
-        #: Linear 0-1 clock for the current run. The eased value is derived
-        #: from it; deriving the clock back from the eased value (as earlier
-        #: releases did) applied the curve once per frame, which made
-        #: ``ease_in`` never finish and ``ease_out`` finish 7x too early.
+                                                                           
+                                                                            
+                                                                     
+                                                                         
         self._t = 0.0
         self._from = self.lower
         self._to = self.upper
@@ -104,7 +104,7 @@ class AnimationController:
         self._completers: list[Callable[[], None]] = []
         self._lock = threading.RLock()
 
-    # ── state ────────────────────────────────────────────────────────────
+                                                                           
 
     @property
     def value(self) -> float:
@@ -124,7 +124,7 @@ class AnimationController:
     def completed(self) -> bool:
         return not self._running and self._value >= self.upper
 
-    # ── listeners ────────────────────────────────────────────────────────
+                                                                           
 
     def on_tick(self, callback: Callable[[float], None]) -> "AnimationController":
         if not callable(callback):
@@ -138,7 +138,7 @@ class AnimationController:
         self._completers.append(callback)
         return self
 
-    # ── driving ──────────────────────────────────────────────────────────
+                                                                           
 
     def forward(self, *, from_: Optional[float] = None) -> "AnimationController":
         """Animate towards :attr:`upper`."""
@@ -164,7 +164,7 @@ class AnimationController:
 
     def toggle(self) -> "AnimationController":
         """Reverse when at (or heading to) the end, otherwise go forward."""
-        return self.reverse() if self._direction > 0 and self._value > 0 \
+        return self.reverse() if self._direction > 0 and self._value > 0\
             else self.forward()
 
     def repeat(self, *, reverse: bool = False) -> "AnimationController":
@@ -183,8 +183,8 @@ class AnimationController:
         if duration:
             self.duration = float(duration)
         self._direction = 1 if target >= self._value else -1
-        # NB: the controller's range is *not* rewritten — an earlier release
-        # moved ``upper`` to the target, permanently shrinking the range.
+                                                                            
+                                                                         
         self._retarget(target)
         return self._start()
 
@@ -215,7 +215,7 @@ class AnimationController:
         self._listeners.clear()
         self._completers.clear()
 
-    # ── the tick loop ────────────────────────────────────────────────────
+                                                                           
 
     def _start(self) -> "AnimationController":
         with self._lock:
@@ -226,7 +226,7 @@ class AnimationController:
         interval = 1.0 / self.fps
         if self._runner is not None and hasattr(self._runner, "every"):
             self._timer = self._runner.every(interval, self._tick)
-        else:                                    # no runner: own thread
+        else:                                                           
             self._timer = _ThreadTicker(interval, self._tick)
             self._timer.start()
         return self
@@ -331,7 +331,7 @@ def _lerp(a: Any, b: Any, t: float) -> Any:
         return _lerp_color(a, b, t)
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
         value = a + (b - a) * t
-        return type(a)(value) if isinstance(a, int) and isinstance(b, int) \
+        return type(a)(value) if isinstance(a, int) and isinstance(b, int)\
             else value
     if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
         values = [_lerp(x, y, t) for x, y in zip(a, b)]
@@ -344,7 +344,7 @@ def _lerp(a: Any, b: Any, t: float) -> Any:
 def _lerp_color(a: str, b: str, t: float) -> str:
     def parts(color: str) -> tuple[int, int, int, int]:
         value = str(color).lstrip("#").strip()
-        if len(value) in (3, 4):          # #RGB / #ARGB shorthand
+        if len(value) in (3, 4):                                  
             value = "".join(c * 2 for c in value)
         if len(value) == 6:
             value = "FF" + value
@@ -356,7 +356,7 @@ def _lerp_color(a: str, b: str, t: float) -> str:
     try:
         ca, cb = parts(a), parts(b)
     except ValueError:
-        # Not a pair of colours — fall back to a hard switch half way.
+                                                                      
         return b if t >= 0.5 else a
     mixed = [round(x + (y - x) * t) for x, y in zip(ca, cb)]
     return "#" + "".join(f"{c:02X}" for c in mixed)

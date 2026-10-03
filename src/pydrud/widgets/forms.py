@@ -34,9 +34,9 @@ _PHONE_RE = re.compile(r"^\+?[0-9 ()\-]{7,20}$")
 _URL_RE = re.compile(r"^https?://[^\s/$.?#].[^\s]*$", re.IGNORECASE)
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Validators — each returns None when valid, or an error message.
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+                                                                 
+                                                                            
 
 
 def required(message: str = "This field is required") -> Validator:
@@ -146,13 +146,13 @@ def matches(other_field: str, message: Optional[str] = None) -> Validator:
     """Cross-field check, e.g. "confirm password". Bound by the Form."""
 
     def _validate(value: Any) -> Optional[str]:
-        # The Form injects the sibling value via the `_peer` attribute.
+                                                                       
         peer = getattr(_validate, "_peer", None)
         if peer is None or value == peer:
             return None
         return message or f"Must match {other_field}"
 
-    _validate._field = other_field  # type: ignore[attr-defined]
+    _validate._field = other_field                              
     return _validate
 
 
@@ -168,9 +168,9 @@ def custom(fn: Callable[[Any], bool], message: str = "Invalid value") -> Validat
     return _validate
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Form
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+      
+                                                                            
 
 
 class FormField(Widget):
@@ -199,7 +199,7 @@ class FormField(Widget):
         self.validators: list[Validator] = list(validators or [])
         self.error: Optional[str] = None
         self.touched = False
-        self.value: Any = initial if initial is not None \
+        self.value: Any = initial if initial is not None\
             else _read_value(control)
         self.children = [control]
         self._control = control
@@ -216,7 +216,7 @@ class FormField(Widget):
         def _on_change(event):
             self.value = _event_value(event, self.value)
             self.touched = True
-            if self.error:           # re-validate as soon as they fix it
+            if self.error:                                               
                 self.validate()
             if user_handler is not None:
                 user_handler(event)
@@ -282,13 +282,13 @@ class Form(Widget):
         for field in fields:
             self.add_field(field)
 
-    # ── composition ──────────────────────────────────────────────────────
+                                                                           
 
     def add_field(self, widget: Widget) -> "Form":
         """Add a FormField, or any widget carrying ``name=``/``validators=``."""
         field = widget if isinstance(widget, FormField) else _promote(widget)
         if field is None:
-            self.children.append(widget)       # plain decoration (Text, Divider)
+            self.children.append(widget)                                         
             return self
         if field.name in self.fields:
             raise ValueError(f"Duplicate form field name {field.name!r}")
@@ -311,7 +311,7 @@ class Form(Widget):
 
         control.event_handlers["change"] = _on_change
 
-    # ── data ─────────────────────────────────────────────────────────────
+                                                                           
 
     @property
     def values(self) -> dict:
@@ -349,7 +349,7 @@ class Form(Widget):
             field.error = message
         return self
 
-    # ── actions ──────────────────────────────────────────────────────────
+                                                                           
 
     def validate(self) -> dict:
         """Validate every field and return ``{name: error}`` (empty = valid)."""
@@ -358,7 +358,7 @@ class Form(Widget):
             for validator in field.validators:
                 peer_name = getattr(validator, "_field", None)
                 if peer_name is not None:
-                    validator._peer = values.get(peer_name)  # type: ignore[attr-defined]
+                    validator._peer = values.get(peer_name)                              
             field.validate()
         return self.errors
 
@@ -389,9 +389,9 @@ class Form(Widget):
         return props
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# helpers
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+         
+                                                                            
 
 
 def _event_value(event: Any, fallback: Any) -> Any:

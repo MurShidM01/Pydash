@@ -12,7 +12,7 @@ import json
 import uuid
 from typing import Any, Callable, Optional
 
-#: Event names a widget may subscribe to.
+                                         
 EVENT_NAMES = (
     "click",
     "long_press",
@@ -42,7 +42,7 @@ class Widget:
     UI has to be re-created on every ``page.update()``.
     """
 
-    # Every subclass sets this to a PascalCase string like "Text", "Button".
+                                                                            
     _widget_type: str = "Widget"
 
     def __init__(
@@ -57,23 +57,23 @@ class Widget:
         on_long_press: Optional[Callable] = None,
         **kwargs,
     ):
-        #: Whether ``key`` was auto-generated (eligible for key stabilisation).
+                                                                               
         self._auto_key: bool = key is None
-        #: Unique identifier; auto-generated if omitted.
+                                                        
         self.key: str = key or _gen_key()
-        #: Style dictionary (see pydrud.widgets.styling for helpers).
+                                                                     
         self.style: dict = dict(style) if style else {}
-        #: Flex / weight factor inside a Row or Column.
+                                                       
         self.expand: Optional[int] = expand
-        #: Whether the widget is visible.
+                                         
         self.visible: bool = visible
-        #: Tooltip text (shown on long-press on Android).
+                                                         
         self.tooltip: Optional[str] = tooltip
-        #: Child widgets (populated by subclasses for layout widgets).
+                                                                      
         self.children: list["Widget"] = []
-        # ``children=`` works on every widget, not just the layouts that
-        # name it. It used to fall through to ``_extra`` and be serialised
-        # as a prop full of Widget objects — i.e. silently dropped.
+                                                                        
+                                                                          
+                                                                   
         if "children" in kwargs:
             supplied = kwargs.pop("children") or []
             if isinstance(supplied, Widget):
@@ -84,12 +84,12 @@ class Widget:
                         f"children= expects Widget instances, "
                         f"got {type(child).__name__}")
             self.children = list(supplied)
-        #: Event callbacks: {"click": callable, "change": callable, ...}
+                                                                        
         self.event_handlers: dict[str, Callable] = {}
-        # Any ``on_<event>=callable`` keyword works on every widget, even
-        # when the subclass does not name it explicitly. Without this a typo
-        # like ``TextField(on_change=cb)`` on a widget that forgot to declare
-        # the parameter would silently serialise a function into `props`.
+                                                                         
+                                                                            
+                                                                             
+                                                                         
         for name in [k for k in kwargs if k.startswith("on_")]:
             handler = kwargs.pop(name)
             if handler is None:
@@ -99,7 +99,7 @@ class Widget:
                     f"{name}= must be callable, got {type(handler).__name__}")
             self.event_handlers[name[3:]] = handler
 
-        #: Catch-all extra properties passed by subclasses.
+                                                           
         self._extra: dict = kwargs
 
         if on_click is not None:
@@ -107,7 +107,7 @@ class Widget:
         if on_long_press is not None:
             self.event_handlers["long_press"] = on_long_press
 
-    # ── builder pattern helpers ──────────────────────────────────────────
+                                                                           
 
     def on_click(self, callback: Callable) -> "Widget":
         """Register a click/tap handler. Returns self for chaining."""
@@ -139,14 +139,14 @@ class Widget:
         self.event_handlers[event] = callback
         return self
 
-    # ── style helpers ────────────────────────────────────────────────────
+                                                                           
 
     def with_style(self, **props) -> "Widget":
         """Merge extra style properties into this widget (chainable)."""
         self.style.update(props)
         return self
 
-    # ── serialisation ────────────────────────────────────────────────────
+                                                                           
 
     def to_dict(self) -> dict:
         """Recursively serialise this widget and its children to a JSON-safe dict."""
@@ -163,10 +163,10 @@ class Widget:
             "props": self._serialise_props(),
         }
         if self.children:
-            # Hidden children are serialised too (the renderer gives them
-            # View.GONE). Dropping them here would make the native child
-            # indices disagree with the diff's indices, so a later
-            # create/move patch would land in the wrong position.
+                                                                         
+                                                                        
+                                                                  
+                                                                 
             d["children"] = [c.to_dict() for c in self.children]
         return d
 
@@ -178,7 +178,7 @@ class Widget:
         """JSON string representation of the widget tree."""
         return json.dumps(self.to_dict(), indent=2, default=str)
 
-    # ── tree helpers ─────────────────────────────────────────────────────
+                                                                           
 
     def find_by_key(self, key: str) -> Optional["Widget"]:
         """Walk the tree and return the first widget matching *key*."""

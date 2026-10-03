@@ -66,7 +66,7 @@ class _Observable:
         for cb in subscribers:
             try:
                 cb(*args)
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:                                
                 print(f"[Pydrud] store subscriber error: {exc}")
         self.changed.value += 1
 
@@ -119,7 +119,7 @@ class Store(_Observable):
         self._selectors: list["Selector"] = []
         self._middleware: list[Callable[[str, dict, dict], None]] = []
 
-    # ── reading ──────────────────────────────────────────────────────────
+                                                                           
 
     @property
     def state(self) -> dict:
@@ -135,7 +135,7 @@ class Store(_Observable):
     def __contains__(self, key: str) -> bool:
         return key in self._state
 
-    # ── writing ──────────────────────────────────────────────────────────
+                                                                           
 
     def set(self, key: str, value: Any) -> "Store":
         """Set a single key (no-op when the value is unchanged)."""
@@ -158,7 +158,7 @@ class Store(_Observable):
         for hook in self._middleware:
             try:
                 hook(action, previous, dict(self._state))
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:                    
                 print(f"[Pydrud] middleware error: {exc}")
         self._notify_selectors(previous)
         self._emit(dict(self._state), set(diff))
@@ -182,7 +182,7 @@ class Store(_Observable):
         for hook in self._middleware:
             try:
                 hook(action, previous, dict(self._state))
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:                    
                 print(f"[Pydrud] middleware error: {exc}")
         self._notify_selectors(previous)
         self._emit(dict(self._state), changed)
@@ -220,7 +220,7 @@ class Store(_Observable):
         self._middleware.append(middleware)
         return self
 
-    # ── selectors ────────────────────────────────────────────────────────
+                                                                           
 
     def select(self, key_or_fn) -> "Selector":
         """Observe one slice of the state.
@@ -240,7 +240,7 @@ class Store(_Observable):
         for selector in list(self._selectors):
             selector._check(previous, self._state)
 
-    # ── time travel (debugging) ──────────────────────────────────────────
+                                                                           
 
     def _push_history(self, snapshot: dict) -> None:
         self._history.append(snapshot)
@@ -316,14 +316,14 @@ class Selector:
         try:
             before = self._project(previous)
             after = self._project(current)
-        except Exception:  # pragma: no cover - projection over partial state
+        except Exception:                                                    
             return
         if before == after:
             return
         for cb in list(self._listeners):
             try:
                 cb(after)
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:                    
                 print(f"[Pydrud] selector listener error: {exc}")
 
     def __repr__(self) -> str:
@@ -358,7 +358,7 @@ class Computed(Generic[T]):
         if not self._valid:
             self._cache = self._fn()
             self._valid = True
-        return self._cache  # type: ignore[return-value]
+        return self._cache                              
 
     @property
     def stale(self) -> bool:
@@ -381,7 +381,7 @@ class Computed(Generic[T]):
             for cb in list(self._subscribers):
                 try:
                     cb(new)
-                except Exception as exc:  # pragma: no cover
+                except Exception as exc:                    
                     print(f"[Pydrud] computed subscriber error: {exc}")
 
     def subscribe(self, callback: Callable[[T], Any]) -> Subscription:
@@ -404,7 +404,7 @@ class ReactiveList(_Observable, Generic[T]):
         super().__init__()
         self._items: list[T] = list(initial or [])
 
-    # ── list protocol ────────────────────────────────────────────────────
+                                                                           
 
     def __len__(self) -> int:
         return len(self._items)
@@ -429,7 +429,7 @@ class ReactiveList(_Observable, Generic[T]):
     def value(self) -> list[T]:
         return list(self._items)
 
-    # ── mutations ────────────────────────────────────────────────────────
+                                                                           
 
     def append(self, item: T) -> "ReactiveList[T]":
         self._items.append(item)
@@ -484,7 +484,7 @@ class ReactiveList(_Observable, Generic[T]):
         self._emit(self.value)
         return self
 
-    # ── queries ──────────────────────────────────────────────────────────
+                                                                           
 
     def where(self, predicate: Callable[[T], bool]) -> list[T]:
         return [i for i in self._items if predicate(i)]

@@ -122,6 +122,8 @@ dependencies {
     implementation("androidx.camera:camera-video:1.3.4")
     // Barcode/QR scanning for page.camera.scan() (bundled, works offline).
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    // SVG assets and remote SVGs for Image(src="illustration.svg").
+    implementation("com.caverock:androidsvg:1.4")
     implementation("com.google.android.material:material:1.12.0")}
 
 // Redirect Android assets to the project-level directory from pydrud.yaml.

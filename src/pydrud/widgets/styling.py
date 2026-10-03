@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Optional, Union
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+                                                                               
 
 
 class EdgeInsets:
@@ -21,7 +21,7 @@ class EdgeInsets:
         top: float = 0,
         right: float = 0,
         bottom: float = 0,
-        all: Optional[float] = None,  # noqa: A002
+        all: Optional[float] = None,              
         horizontal: Optional[float] = None,
         vertical: Optional[float] = None,
     ):
@@ -73,7 +73,7 @@ class FontStyle:
         self,
         size: Optional[float] = None,
         color: Optional[str] = None,
-        weight: Optional[int] = None,  # 100-900
+        weight: Optional[int] = None,           
         italic: bool = False,
         family: Optional[str] = None,
     ):
@@ -167,7 +167,7 @@ class BorderRadius:
         return {"radius": self.radius}
 
 
-# ── Style builder ────────────────────────────────────────────────────────────
+                                                                               
 
 
 class Style:
@@ -190,7 +190,7 @@ class Style:
     def __init__(self):
         self._data: dict = {}
 
-    # --- background ---
+                        
 
     def bg(self, color: str) -> "Style":
         """Background colour (hex ARGB or RGB)."""
@@ -202,7 +202,7 @@ class Style:
         self._data["opacity"] = value
         return self
 
-    # --- size ---
+                  
 
     def width(self, value: Union[float, str]) -> "Style":
         """Fixed width in dp, or a string like "match", "wrap"."""
@@ -230,7 +230,7 @@ class Style:
         self._data["maxHeight"] = value
         return self
 
-    # --- spacing ---
+                     
 
     def padding(self, value: Union[EdgeInsets, float]) -> "Style":
         self._data["padding"] = value.to_dict() if isinstance(value, EdgeInsets) else {"all": value}
@@ -240,7 +240,7 @@ class Style:
         self._data["margin"] = value.to_dict() if isinstance(value, EdgeInsets) else {"all": value}
         return self
 
-    # --- border ---
+                    
 
     def border(self, value: Border) -> "Style":
         self._data["border"] = value.to_dict()
@@ -250,7 +250,7 @@ class Style:
         self._data["borderRadius"] = value if isinstance(value, (int, float)) else value.radius
         return self
 
-    # --- font ---
+                  
 
     def font(self, value: FontStyle) -> "Style":
         self._data["font"] = value.to_dict()
@@ -269,7 +269,7 @@ class Style:
         self._data["textAlign"] = align
         return self
 
-    # --- layout ---
+                    
 
     def alignment(self, value: str) -> "Style":
         """Use one of the ``Alignment`` constants."""
@@ -288,20 +288,20 @@ class Style:
         self._data["tooltip"] = value
         return self
 
-    # --- transform ---
+                       
 
     def rotate(self, degrees: float) -> "Style":
         self._data["rotate"] = degrees
         return self
 
-    # --- image ---
+                   
 
     def fit(self, value: str) -> "Style":
         """Image scale type: "cover", "contain", "fill", "fitWidth", "fitHeight", "none"."""
         self._data["fit"] = value
         return self
 
-    # --- shorthands ---
+                        
 
     def bg_image(self, src: str, fit: str = "cover") -> "Style":
         """Set background image."""
