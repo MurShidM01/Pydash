@@ -12,16 +12,20 @@ import unittest
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
+from pydrud import Colors  # noqa: E402
 from pydrud.testing import AppTester  # noqa: E402
 
 from app.main import create_app  # noqa: E402
-from app.runtime import router  # noqa: E402
+from app.preview.models import ConnectionState  # noqa: E402
+from app.preview.session import session  # noqa: E402
+from app.runtime import refresh, router  # noqa: E402
 from app.state import active_tab  # noqa: E402
 
 
 class TestApp(unittest.TestCase):
     def setUp(self):
         active_tab.value = 0
+        session.state = ConnectionState.IDLE
         self.app = AppTester(app=create_app()).start()
 
     def tearDown(self):
@@ -40,10 +44,26 @@ class TestApp(unittest.TestCase):
         self.app.toggle("pd_shell_nav", 0)
         self.assertTrue(self.app.shows("Scan QR code"))
 
-    def test_status_pill_reflects_idle_state(self):
-        node = self.app.node("pd_shell_status_label")
+    def test_app_bar_status_dot_red_when_not_connected(self):
+        node = self.app.node("pd_shell_status_dot")
         self.assertIsNotNone(node)
-        self.assertEqual(node.props.get("value"), "Not connected")
+        self.assertEqual(node.style.get("bg"), Colors.ERROR)
+        self.assertIsNone(self.app.node("pd_shell_status_label"))
+
+    def test_app_bar_status_dot_green_when_connected(self):
+        session.state = ConnectionState.CONNECTED
+        try:
+            refresh()
+            self.app.device.wait_for(
+                lambda d: (d.find_key("pd_shell_status_dot") or {}).get(
+                    "style", {}).get("bg") == Colors.SUCCESS
+            )
+            node = self.app.node("pd_shell_status_dot")
+            self.assertIsNotNone(node)
+            self.assertEqual(node.style.get("bg"), Colors.SUCCESS)
+        finally:
+            session.state = ConnectionState.IDLE
+            refresh()
 
     # ── connection flow screens ──────────────────────────────────────────
 
