@@ -48,12 +48,15 @@
             </intent-filter>
 
             <!-- Deep links: pydash://items/7
-                 reaches app.on_deep_link() and the Router. -->
+                 reaches app.on_deep_link() and the Router.
+                 The pydrud:// scheme also lets the QR code printed by
+                 `pydrud dev` open Pydash straight from any scanner app. -->
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="pydash" />
+                <data android:scheme="pydrud" />
             </intent-filter>        </activity>
 
         <!-- Foreground service for long-running Python work. -->

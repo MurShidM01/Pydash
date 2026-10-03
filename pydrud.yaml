@@ -21,6 +21,7 @@ assets_dir: "assets"
 scheme: "pydash"
 app_links_host: ""
 permissions:
+  - "CAMERA"
 capabilities:
   - "haptics"
   - "notifications"
