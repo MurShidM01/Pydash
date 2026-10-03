@@ -14,7 +14,7 @@ from typing import Optional
 
 from pydrud import (
     Button, Card, Column, Container, Divider, Icon, Icons, Radius, Row,
-    Spacing, Switch, Text, TextField, Theme, Widget,
+    SegmentedButton, Spacing, Switch, Text, TextField, Theme, Widget,
 )
 
 from app.components import section
@@ -44,11 +44,16 @@ scanning = State(False, name="scan_scanning")
 
 def scan_screen(page, params=None) -> None:
     params = dict(params or {})
-    if params.get("mode") == "manual":
+    mode = params.get("mode")
+    if mode == "manual" or bool(params.get("uri")):
         manual_mode.value = True
-    elif params.get("uri"):
-        uri_text.value = str(params["uri"])
-        manual_mode.value = True
+        if params.get("uri"):
+            uri_text.value = str(params["uri"])
+    else:
+        manual_mode.value = False
+
+    notice.value = ""
+    scanning.value = False
 
     page.bgcolor = Theme.background
     page.add(Container(
@@ -58,14 +63,14 @@ def scan_screen(page, params=None) -> None:
         child=_screen(),
     ))
 
-    if camera_state.value == "unknown":
+    if not manual_mode.value and camera_state.value == "unknown":
         _request_camera()
 
 
 def _screen() -> Widget:
     from app.components import page_body
 
-    children: list[Widget] = [_header()]
+    children: list[Widget] = [_header(), _mode_toggle()]
     if manual_mode.value:
         children.append(_manual_card())
     else:
@@ -99,6 +104,31 @@ def _header() -> Widget:
     )
 
 
+def _mode_toggle() -> Widget:
+    return SegmentedButton(
+        ["Scan QR code", "Enter manually"],
+        key="pd_scan_mode_toggle",
+        selected=1 if manual_mode.value else 0,
+    ).on_change(_on_mode_change)
+
+
+def _on_mode_change(event) -> None:
+    val = 0
+    if isinstance(event, dict):
+        val = event.get("value", 0)
+    elif hasattr(event, "value"):
+        val = getattr(event, "value", 0)
+    try:
+        val = int(val)
+    except (TypeError, ValueError):
+        val = 0
+
+    if val == 1:
+        _switch_manual()
+    else:
+        _switch_camera()
+
+
 # ── camera ──────────────────────────────────────────────────────────────────
 
 def _camera_card() -> Widget:
@@ -112,6 +142,7 @@ def _camera_card() -> Widget:
             fit="cover",
             scan=True,
             scan_formats=("QR_CODE",),
+            scan_overlay=True,
             on_scan=_on_scan,
             on_error=lambda e: _fail("Camera error: "
                                      + str(getattr(e, "data", {}).get(
@@ -204,7 +235,16 @@ def _manual_link() -> Widget:
 
 def _switch_manual() -> None:
     manual_mode.value = True
-    refresh()
+    notice.value = ""
+    router.replace("scan", mode="manual")
+
+
+def _switch_camera() -> None:
+    manual_mode.value = False
+    notice.value = ""
+    if camera_state.value == "unknown":
+        _request_camera()
+    router.replace("scan", mode="scan")
 
 
 # ── manual entry ────────────────────────────────────────────────────────────
@@ -214,6 +254,8 @@ def _manual_card() -> Widget:
         section("Paste the connection URI", "pd_scan_uri_sec"),
         TextField(uri_text.value, key="pd_scan_uri_field",
                   hint="pydrud://preview/connect?host=…",
+                  ime_action="go",
+                  on_submit=lambda _e: _connect_uri(),
                   ).on_change(_set_uri),
         Button("Connect", key="pd_scan_uri_connect", icon=Icons.LINK,
                full_width=True,
@@ -236,17 +278,22 @@ def _manual_card() -> Widget:
         ),
         section("Enter the parts", "pd_scan_parts_sec"),
         TextField(host_text.value, key="pd_scan_host", hint="192.168.1.20",
-                  label="Host", keyboard="url").on_change(_set_host),
+                  label="Host", keyboard="url", ime_action="next").on_change(_set_host),
         TextField(port_text.value, key="pd_scan_port", hint="8597",
-                  label="Port", keyboard="number").on_change(_set_port),
+                  label="Port", keyboard="number", ime_action="next").on_change(_set_port),
         TextField(session_text.value, key="pd_scan_session",
-                  label="Session id").on_change(_set_session),
+                  label="Session id", ime_action="next").on_change(_set_session),
         TextField(token_text.value, key="pd_scan_token", label="Token",
-                  password=True).on_change(_set_token),
+                  password=True, ime_action="done",
+                  on_submit=lambda _e: _connect_parts()).on_change(_set_token),
         Button("Connect", key="pd_scan_parts_connect",
                icon=Icons.LINK, full_width=True,
                ).on_click(lambda _e: _connect_parts()),
         _recent(),
+        Button("Scan QR code with camera",
+               key="pd_scan_switch_camera", variant="tonal",
+               icon=Icons.CAMERA, full_width=True
+               ).on_click(lambda _e: _switch_camera()),
     ])
     return Card(
         key="pd_scan_manual_card",
@@ -350,17 +397,29 @@ def _notice() -> Widget:
 
 def _request_camera() -> None:
     page = _page()
-    if page is None:
+    if page is None or not hasattr(page, "permissions"):
         camera_state.value = "denied"
         return
 
     def done(result=None):
-        granted = bool(result)
+        granted = False
+        if isinstance(result, dict):
+            granted = bool(
+                result.get("android.permission.CAMERA")
+                or result.get("camera")
+                or any(result.values())
+            )
+        elif isinstance(result, bool):
+            granted = result
+        elif result is not None:
+            granted = bool(result)
         camera_state.value = "granted" if granted else "denied"
         refresh()
 
-    result = page.permissions.request("camera")
-    result.then(done).catch(lambda _error: done(False))
+    try:
+        page.permissions.request("camera").then(done).catch(lambda _error: done(False))
+    except Exception:
+        done(False)
 
 
 def _on_scan(event) -> None:

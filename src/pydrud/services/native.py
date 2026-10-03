@@ -16,17 +16,17 @@ from pydrud.core.results import Result
 
 Invoke = Callable[..., Result]
 
-#: Commands this Python API exposes that the Android layer does not
-#: implement. As of 1.6.0 this is **empty**: Bluetooth LE, NFC, the camera
-#: extras, speech recognition, the colour picker, continuous location and
-#: notification channels all have native handlers.
-#:
-#: Anything listed here must *fail* rather than leave a
-#: :class:`~pydrud.core.results.Result` pending forever; ``BridgeService``
-#: answers the same way on-device, so tests, the previewer and the analyzer
-#: behave identically.
-#:
-#: Keep in sync with ``tests/test_native_coverage.py``.
+                                                                   
+                                                                          
+                                                                         
+                                                  
+  
+                                                       
+                                                                          
+                                                                           
+                      
+  
+                                                       
 UNIMPLEMENTED_COMMANDS: frozenset = frozenset()
 
 
@@ -37,9 +37,9 @@ class _Service:
         self._invoke = invoke
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Dialogs, sheets and pickers
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+                             
+                                                                            
 
 
 class Dialogs(_Service):
@@ -108,9 +108,9 @@ class Dialogs(_Service):
         return self._invoke("progress_dialog", show=False)
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Persistence
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+             
+                                                                            
 
 
 class Storage(_Service):
@@ -177,9 +177,9 @@ class FilePicker(_Service):
         return self._invoke("app_dir", kind="cache")
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# System integration
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+                    
+                                                                            
 
 
 class Clipboard(_Service):
@@ -224,7 +224,7 @@ class Share(_Service):
 class Permissions(_Service):
     """Runtime permissions (Android 6+)."""
 
-    #: Short names mapped to the full Android permission strings.
+                                                                 
     ALIASES = {
         "camera": "android.permission.CAMERA",
         "microphone": "android.permission.RECORD_AUDIO",
@@ -297,8 +297,31 @@ class Permissions(_Service):
             f"{sorted(self.ALIASES)} or a full android.permission.* string")
 
     def check(self, name: str) -> Result:
-        """Resolves with True when already granted."""
+        """Resolves with ``True`` when *name* is already granted.
+
+        Prefer :meth:`status` when the distinction between an ordinary denial
+        and a permanent denial matters.
+        """
         return self._invoke("permission_check", permission=self.resolve(name))
+
+    def is_granted(self, name: str, *, timeout: float = 2.0) -> bool:
+        """Synchronous ``True``/``False`` — never opens a system prompt.
+
+        The bridge answers permission checks from native side immediately,
+        so blocking the calling thread here is safe (and this is what makes
+        guards like ``if page.permissions.is_granted("camera"):`` feel
+        natural). Inside async code prefer ``await page.permissions.check(name)``.
+        """
+        return bool(self.check(name).wait(timeout=timeout, default=False))
+
+    def status(self, name: str) -> Result:
+        """Query permission state without opening a system prompt.
+
+        Resolves with one of ``"granted"``, ``"denied"`` or
+        ``"permanently_denied"``. Android only exposes permanent denial after
+        an earlier request, which Pydrud records for the app automatically.
+        """
+        return self._invoke("permission_status", permission=self.resolve(name))
 
     def request(self, *names: str) -> Result:
         """Ask the user. Resolves with ``{permission: granted}``."""
@@ -400,14 +423,14 @@ class Haptics(_Service):
                             repeat=int(repeat))
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Aggregate
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+           
+                                                                            
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Secure storage (Keystore-backed)
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+                                  
+                                                                            
 
 
 class Secure(_Service):
@@ -442,9 +465,9 @@ class Secure(_Service):
         return self._invoke("secure_available")
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Background execution
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+                      
+                                                                            
 
 
 class Background(_Service):
@@ -469,7 +492,7 @@ class Background(_Service):
         super().__init__(invoke)
         self._jobs: dict[str, Callable] = {}
 
-    # ── jobs ─────────────────────────────────────────────────────────────
+                                                                           
 
     def job(self, name: str) -> Callable:
         """Decorator registering the Python callable WorkManager will run."""
@@ -498,7 +521,7 @@ class Background(_Service):
     def jobs(self) -> list[str]:
         return sorted(self._jobs)
 
-    # ── scheduling ───────────────────────────────────────────────────────
+                                                                           
 
     def schedule(self, name: str, *, every: Optional[float] = None,
                  delay: float = 0, network: Any = False,
@@ -530,7 +553,7 @@ class Background(_Service):
         """Resolves with ``enqueued`` / ``running`` / ``succeeded`` / …"""
         return self._invoke("work_status", name=str(name))
 
-    # ── foreground service ───────────────────────────────────────────────
+                                                                           
 
     def start_service(self, *, title: str = "Running",
                       message: str = "", icon: str = "",
@@ -617,9 +640,9 @@ class Shortcuts(_Service):
                             values=dict(values))
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Hardware
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+          
+                                                                            
 
 
 class Camera(_Service):
@@ -937,7 +960,7 @@ class Services:
         self.audio = Audio(invoke)
 
     def __repr__(self) -> str:
-        return "<Services dialog storage clipboard share permissions " \
-               "notifications location device files haptics secure " \
-               "background push shortcuts camera sensors bluetooth nfc " \
+        return "<Services dialog storage clipboard share permissions "\
+               "notifications location device files haptics secure "\
+               "background push shortcuts camera sensors bluetooth nfc "\
                "biometrics audio>"

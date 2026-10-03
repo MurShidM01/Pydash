@@ -27,6 +27,15 @@ from pydrud.core.results import Result
 DEFAULT_TIMEOUT = 20.0
 
 
+def user_agent() -> str:
+    """Versioned client identity — never a stale hardcoded string."""
+    try:
+        from pydrud import __version__
+        return f"Pydrud/{__version__} (Android)"
+    except Exception:                                                        
+        return "Pydrud/2 (Android)"
+
+
 class HttpResponse:
     """A completed HTTP response."""
 
@@ -74,7 +83,7 @@ class Http:
         self.headers = dict(headers or {})
         self.timeout = float(timeout)
 
-    # ── configuration ────────────────────────────────────────────────────
+                                                                           
 
     def configure(self, *, base_url: Optional[str] = None,
                   headers: Optional[dict] = None,
@@ -92,7 +101,7 @@ class Http:
         self.headers["Authorization"] = f"Bearer {token}"
         return self
 
-    # ── verbs ────────────────────────────────────────────────────────────
+                                                                           
 
     def get(self, url: str, *, params: Optional[dict] = None, **kw) -> Result:
         return self.request("GET", url, params=params, **kw)
@@ -120,7 +129,7 @@ class Http:
             try:
                 request = urllib.request.Request(self._url(url),
                                                  headers=self.headers)
-                with urllib.request.urlopen(request, timeout=self.timeout) as r, \
+                with urllib.request.urlopen(request, timeout=self.timeout) as r,\
                         open(dest, "wb") as out:
                     while True:
                         chunk = r.read(64 * 1024)
@@ -128,13 +137,13 @@ class Http:
                             break
                         out.write(chunk)
                 result.complete(dest)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:                
                 result.fail(str(exc))
 
         self._submit(_work)
         return result
 
-    # ── core ─────────────────────────────────────────────────────────────
+                                                                           
 
     def request(self, method: str, url: str, *, params: Optional[dict] = None,
                 json_body: Any = None, data: Any = None,
@@ -159,7 +168,7 @@ class Http:
             else:
                 payload = bytes(data)
         merged.setdefault("Accept", "application/json, text/plain, */*")
-        merged.setdefault("User-Agent", "Pydrud/1.2 (Android)")
+        merged.setdefault("User-Agent", user_agent())
 
         result = Result(f"{method} {full_url}", "http")
         effective_timeout = self.timeout if timeout is None else float(timeout)
@@ -186,12 +195,12 @@ class Http:
                         body = exc.read().decode("utf-8", errors="replace")
                     except Exception:
                         pass
-                    # 4xx is an answer, not a transport failure — deliver it.
+                                                                             
                     result.complete(HttpResponse(
                         exc.code, body, dict(exc.headers or {}), full_url,
                         time.monotonic() - started))
                     return
-                except Exception as exc:  # noqa: BLE001 - network/DNS/timeout
+                except Exception as exc:                                      
                     last_error = str(exc)
                     if attempt + 1 < attempts:
                         time.sleep(retry_delay * (2 ** attempt))

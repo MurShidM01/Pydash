@@ -48,7 +48,7 @@ class Colors:
     TEXT_SECONDARY = "#FF6B7280"
     TEXT_DISABLED = "#FF9CA3AF"
 
-    #: Material-3 role aliases — handy when styling custom components.
+                                                                      
     ON_PRIMARY = "#FFFFFFFF"
     PRIMARY_CONTAINER = "#FFE0E7FF"
     ON_PRIMARY_CONTAINER = "#FF312E81"
@@ -73,7 +73,7 @@ class Colors:
     BROWN = "#FF78716C"
     GREY = "#FF6B7280"
 
-    #: Default series colours for Chart and Canvas.pie().
+                                                         
     CHART_PALETTE = ("#FF6366F1", "#FF14B8A6", "#FFF59E0B", "#FFEF4444",
                      "#FFA855F7", "#FF3B82F6", "#FF22C55E", "#FFEC4899")
 
@@ -246,7 +246,7 @@ class Icons:
     LANGUAGE = "language"
     PRINT_OUTLINE = "print_outline"
 
-    # Developer / product icons
+                               
     CODE = "code"
     TERMINAL = "terminal"
     PYTHON = "python"
@@ -326,7 +326,7 @@ class Spacing:
     XXL = 32
     HUGE = 48
 
-    #: Comfortable page gutter — 20dp on phones reads better than 16.
+                                                                     
     GUTTER = 20
 
     @classmethod
@@ -345,7 +345,7 @@ class Radius:
     LG = 18
     XL = 24
     XXL = 32
-    #: Fully rounded (pill / circle) — clamped by the renderer.
+                                                               
     PILL = 999
 
 
@@ -391,7 +391,7 @@ class Theme:
     text: str = Colors.TEXT
     dark_mode: bool = False
 
-    #: Derived roles, refreshed whenever a :class:`ColorScheme` is applied.
+                                                                           
     secondary: str = Colors.SECONDARY
     surface_variant: str = Colors.SURFACE_VARIANT
     outline: str = Colors.OUTLINE
@@ -422,17 +422,55 @@ class Theme:
             cls.dark_mode = dark_mode
 
     @classmethod
+    def system(cls) -> None:
+        """Use Android 12+ wallpaper-derived Material You colours.
+
+        The actual palette lives on the device, so this marks the next
+        connected :class:`~pydrud.App` theme push for a native query. On older
+        Android versions the current Python palette remains the graceful
+        fallback. Call ``app.apply_theme()`` when switching after startup.
+        """
+        cls._system_requested = True
+
+    @classmethod
+    def _uses_system(cls) -> bool:
+        return bool(getattr(cls, "_system_requested", False))
+
+    @classmethod
+    def _apply_system_palette(cls, palette: dict) -> bool:
+        """Adopt a palette returned by the Android Material You service."""
+        if not isinstance(palette, dict) or not palette.get("available"):
+            return False
+        roles = {
+            "primary": "primary", "secondary": "secondary",
+            "background": "background", "surface": "surface",
+            "on_surface": "text", "surface_variant": "surface_variant",
+            "outline": "outline", "on_primary": "on_primary",
+        }
+        for native_name, python_name in roles.items():
+            value = palette.get(native_name)
+            if isinstance(value, str) and value:
+                setattr(cls, python_name, value)
+        cls.dark_mode = bool(palette.get("dark", cls.dark_mode))
+                                                                              
+                                                          
+        cls.scheme = None
+        return True
+
+    @classmethod
     def dark(cls) -> None:
         """Switch to a sensible dark palette derived from the current seed.
 
         The primary colour is lifted so it keeps its contrast on a dark
         surface — the same correction Material You applies.
         """
+        cls._system_requested = False
         cls.use(ColorScheme.from_seed(cls._seed(), dark=True))
 
     @classmethod
     def light(cls) -> None:
         """Switch back to the light palette for the current seed."""
+        cls._system_requested = False
         cls.use(ColorScheme.from_seed(cls._seed(), dark=False))
 
     @classmethod
@@ -444,6 +482,7 @@ class Theme:
             Theme.seed(Colors.TEAL)          # light palette
             Theme.dark()                     # same brand, dark surfaces
         """
+        cls._system_requested = False
         cls._seed_color = color
         cls.use(ColorScheme.from_seed(color, dark=cls.dark_mode))
 
@@ -529,8 +568,8 @@ class Theme:
                                 else "text_secondary", None)
                 if value:
                     data[role] = value
-        # Every metric the renderer draws with — shape, size, depth,
-        # motion and type — so Java never has an opinion of its own.
+                                                                    
+                                                                    
         data["tokens"] = Tokens.as_dict()
         return data
 
@@ -563,8 +602,8 @@ class ColorScheme:
     @classmethod
     def from_seed(cls, seed: str = Colors.PRIMARY, *, dark: bool = False) -> "ColorScheme":
         r, g, b = _rgb(seed)
-        # A harmonious secondary: the same colour rotated around the wheel,
-        # not a channel swap (which lands on random hues).
+                                                                           
+                                                          
         secondary = _rotate_hue(seed, 38, saturation=0.92)
         if dark:
             scheme = cls(
@@ -648,7 +687,7 @@ def _tone(r: int, g: int, b: int, factor: float) -> str:
         return max(0, min(255, int(round(v))))
 
     if factor >= 1:
-        # Blend towards white so highlights do not clip to a flat colour.
+                                                                         
         t = min(1.0, factor - 1.0)
         return _argb("%02X%02X%02X" % (_clamp(r + (255 - r) * t),
                                        _clamp(g + (255 - g) * t),
@@ -690,7 +729,7 @@ def _theme_use(cls, scheme: "ColorScheme") -> None:
     cls.outline = scheme.outline
     cls.error = scheme.error
     cls.on_primary = scheme.on_primary
-    #: Muted text colour that stays readable on the current surface.
+                                                                    
     cls.text_secondary = ("#FF9BA6B8" if scheme.dark
                           else Colors.TEXT_SECONDARY)
     cls.scheme = scheme

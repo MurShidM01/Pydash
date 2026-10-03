@@ -215,7 +215,7 @@ def _idle_surface() -> Widget:
                     "previewing a project here.",
             tone="idle",
             action="Scan now",
-            on_action=lambda _event: router.push("scan"),
+            on_action=lambda _event: router.push("scan", mode="scan"),
         ))
 
 

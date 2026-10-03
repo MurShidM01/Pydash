@@ -70,7 +70,7 @@ class ResponsiveBuilder(Widget):
         self.builder = builder
         self.rebuild()
 
-    # ── internals ───────────────────────────────────────────────────────
+                                                                          
 
     def _invoke(self) -> Widget:
         info = MediaQuery.info()
@@ -218,7 +218,7 @@ class ShowWhen(ResponsiveBuilder):
         }
         for name in (at_least, at_most):
             if name is not None:
-                Breakpoints.index(name)  # validate early
+                Breakpoints.index(name)                  
         self._at_least = at_least
         self._at_most = at_most
         super().__init__(self._choose, key=key)

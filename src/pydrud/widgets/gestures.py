@@ -15,7 +15,7 @@ from typing import Callable, Optional
 
 from pydrud.widgets.base import Widget
 
-#: Gestures the Android ``EventDispatcher`` knows how to detect.
+                                                                
 GESTURES = (
     "tap",
     "double_tap",

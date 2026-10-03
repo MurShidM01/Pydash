@@ -27,7 +27,7 @@ from pydrud.core.protocol import MAX_FRAME_BYTES, RenderTransaction
 from pydrud.core.elements import ElementTree
 from pydrud.widgets import Widget, assign_stable_keys, validate_tree_keys
 
-#: Above this many patches a full re-render is cheaper than patching.
+                                                                     
 MAX_PATCHES = 60
 
 
@@ -42,9 +42,9 @@ class App:
         App(target=main).run()
     """
 
-    #: The most recently created :class:`App`. Screen code can reach the
-    #: running app through :meth:`current` without threading it through
-    #: every function. ``None`` before the first app is constructed.
+                                                                        
+                                                                       
+                                                                    
     _active: "Optional[App]" = None
 
     @classmethod
@@ -71,11 +71,11 @@ class App:
         self.assets_dir = assets_dir
 
         self._page = _Page(self)
-        self._event_dispatcher = EventDispatcher()
+        self._event_dispatcher = EventDispatcher(self._schedule_awaitable)
         self._current_tree: Optional[Widget] = None
-        #: Desired Python tree. Native confirmation advances _snapshot.
+                                                                       
         self._desired_tree: Optional[Widget] = None
-        #: Clone of the tree the native runtime has explicitly acknowledged.
+                                                                            
         self._snapshot: Optional[Widget] = None
         self._elements = ElementTree()
         self._desired_revision = 0
@@ -89,54 +89,54 @@ class App:
         self._bridge = BridgeProtocol()
         self._connected = False
         self._transport: Optional[socket.socket] = None
-        # ── Thread-safe event queue ─────────────────────────────────
+                                                                      
         self._event_queue: queue.Queue = queue.Queue(maxsize=1024)
-        #: Number of event lines fully handled by the event loop. Test
-        #: harnesses use it to tell "nothing queued yet" from "all done".
+                                                                      
+                                                                         
         self._events_handled = 0
         self._shutdown_event = threading.Event()
         self._reader_thread: Optional[threading.Thread] = None
         self._running = False
         self._lock = threading.Lock()
-        # ── Router support ─────────────────────────────────────────
+                                                                     
         self._router: Optional[Any] = None
         self._metrics_handlers: list = []
-        # ── Hot Reload ─────────────────────────────────────────────
+                                                                     
         self._watcher: Optional[Any] = None
         self._watch_dirs: list[str] = ["src"]
         self._project_root: str = self._find_root()
         self._hot_reload_requested = hot_reload
-        # ── Lifecycle hooks ────────────────────────────────────────
+                                                                     
         self._lifecycle_handlers: dict[str, list[Callable]] = {}
-        #: Deep links / shortcuts / push messages / sensor streams.
+                                                                   
         self._deep_link_handlers: list[Callable] = []
         self._push_handlers: list[Callable] = []
-        #: FCM registration-token refreshes and audio playback completions.
+                                                                           
         self._push_token_handlers: list[Callable] = []
         self._audio_complete_handlers: list[Callable] = []
-        #: Streaming native events: GPS fixes, BLE notifications, recordings.
+                                                                             
         self._location_handlers: list[Callable] = []
         self._bluetooth_handlers: list[Callable] = []
         self._recording_handlers: list[Callable] = []
         self._pending_deep_link: Optional[str] = None
-        #: Bound reactive objects — also used to carry values across reloads.
+                                                                             
         self._bound_states: list = []
         self._bound_stores: list = []
         self._subscriptions: list = []
         self._preserve_state: bool = True
         self._error_handler: Optional[Callable[[BaseException], None]] = None
-        # ── Native service calls (request/response) ────────────────
+                                                                     
         self._pending: dict[str, Result] = {}
         self._request_seq = 0
         self._tasks = TaskRunner(on_error=self._report_error)
-        # ── UI-thread marshalling ──────────────────────────────────
+                                                                     
         self._ui_queue: queue.Queue = queue.Queue(maxsize=1024)
-        # ── DevServer (Hot reload & diagnostics) ───────────────────
+                                                                     
         self._dev_port = kwargs.get("dev_port", 8596)
         self._dev_server_enabled = kwargs.get("dev_server", True)
         self._dev_server: Optional[Any] = None
 
-    # ── public API ────────────────────────────────────────────────────────
+                                                                            
 
     @property
     def page(self) -> "_Page":
@@ -192,8 +192,8 @@ class App:
         """Serve one authenticated, connected renderer until it disconnects."""
         if self._connected:
             raise RuntimeError("a renderer transport is already connected")
-        # Finish any callback queued just behind the previous disconnect, then
-        # discard that reader's consumed-loop sentinel before reconnect.
+                                                                              
+                                                                        
         self._drain_ui_queue()
         while True:
             try:
@@ -218,6 +218,7 @@ class App:
                 self._apply_metrics(dict(metrics))
             self._desired_tree = self._build_tree()
             self._send_theme()
+            self._request_system_theme()
             self._send_desired_tree(force_snapshot=True)
             self._reader_thread = threading.Thread(
                 target=self._reader_loop, args=(transport,), daemon=True,
@@ -225,8 +226,8 @@ class App:
             self._reader_thread.start()
             self._event_loop()
         finally:
-            # Between clients there is no UI actor; watcher callbacks rebuild
-            # directly and the next connection receives that desired tree.
+                                                                             
+                                                                          
             self._running = self._connected = False
             if self._transport is transport:
                 try:
@@ -380,7 +381,7 @@ class App:
             self._dev_server = None
         self._connected = False
 
-    # ── lifecycle & errors ────────────────────────────────────────────────
+                                                                            
 
     def on_lifecycle(self, event: str, callback: Callable) -> "App":
         """Register a lifecycle callback (``resume``/``pause``/``stop``/``destroy``)."""
@@ -450,11 +451,29 @@ class App:
         self._recording_handlers.append(callback)
         return self
 
+    def _schedule_awaitable(self, awaitable) -> None:
+        """Run an async UI callback without blocking the bridge event loop.
+
+        ``TaskRunner`` owns a small coroutine-capable worker pool.  Native
+        :class:`~pydrud.core.results.Result` instances are awaitable and
+        forward their completion back into this coroutine's event loop, so a
+        handler can naturally write ``await page.dialog.confirm(...)``.
+        """
+        async def run_handler():
+            return await awaitable
+
+        try:
+            self._tasks.run(run_handler)
+        except Exception as exc:
+            self._report_error(exc)
+
     def _dispatch(self, handlers: list, payload) -> None:
         """Call every handler, isolating failures from the event loop."""
         for cb in list(handlers):
             try:
-                cb(payload)
+                result = cb(payload)
+                if hasattr(result, "__await__"):
+                    self._schedule_awaitable(result)
             except Exception as exc:
                 self._report_error(exc)
 
@@ -499,7 +518,7 @@ class App:
             sys.stderr.write(tb_str + "\n")
             sys.stderr.flush()
 
-    # ── tree building ─────────────────────────────────────────────────────
+                                                                            
 
     def _build_tree(self) -> Widget:
         """Run the target, build the page, stabilise keys, index handlers."""
@@ -536,7 +555,7 @@ class App:
                 walk(child, widget.key, i)
         walk(tree)
 
-    # ── Hot Reload ─────────────────────────────────────────────────────────
+                                                                             
 
     def enable_hot_reload(self, watch_dirs: list[str] | None = None) -> None:
         """Watch source files and rebuild the UI when they change.
@@ -567,7 +586,7 @@ class App:
             self._watcher.stop()
             self._watcher = None
 
-    # ── stateful hot reload ──────────────────────────────────────────────
+                                                                           
 
     def capture_state(self) -> dict:
         """Snapshot every bound State/Store value before a reload."""
@@ -586,8 +605,8 @@ class App:
             except Exception:
                 snapshot["stores"].append(None)
         if self._router is not None:
-            # Store the *pattern* (e.g. "/items/:id"), which is what the
-            # rebuilt router will know about, plus the resolved params.
+                                                                        
+                                                                       
             snapshot["route"] = self._router.current_route
             snapshot["params"] = dict(self._router.current_params)
             snapshot["path"] = self._router.path()
@@ -630,8 +649,8 @@ class App:
             if self._router.has_route(route):
                 self._router.replace(route, **(snapshot.get("params") or {}))
             elif snapshot.get("path"):
-                # The route pattern was renamed or removed; fall back to
-                # resolving the concrete URL path again.
+                                                                        
+                                                        
                 self._router.go(snapshot["path"])
         except Exception:
             pass
@@ -651,12 +670,12 @@ class App:
         t0 = time.perf_counter()
         reloaded_modules = []
 
-        # 1. Sync directory on device
+                                     
         sync_dir = self._get_sync_dir()
         if sync_dir and sync_dir not in sys.path:
             sys.path.insert(0, sync_dir)
 
-        # 2. Syntax validation pass
+                                   
         compiled_files = []
         for f in files:
             rel_path = f.get("path", "")
@@ -697,10 +716,10 @@ class App:
                     "traceback": tb,
                 }
 
-        # 3. Snapshot state before modifying modules
+                                                    
         snapshot = self.capture_state() if self._preserve_state else None
 
-        # 4. Write files and execute into modules
+                                                 
         for clean_path, content, code_obj in compiled_files:
             if sync_dir:
                 full_dest = os.path.join(sync_dir, clean_path)
@@ -738,7 +757,7 @@ class App:
                     "traceback": tb,
                 }
 
-        # 5. Re-bind router / target if main module or screens were reloaded
+                                                                            
         if "app.main" in sys.modules:
             try:
                 main_mod = sys.modules["app.main"]
@@ -754,11 +773,11 @@ class App:
             except Exception:
                 pass
 
-        # 6. Restore state
+                          
         if snapshot is not None:
             self.restore_state(snapshot)
 
-        # 7. Update UI
+                      
         self.update()
 
         duration_ms = (time.perf_counter() - t0) * 1000
@@ -775,7 +794,7 @@ class App:
         """Reset all app state, reload all user modules from scratch, and re-render."""
         t0 = time.perf_counter()
 
-        # Sync files if provided
+                                
         if files:
             sync_dir = self._get_sync_dir()
             if sync_dir and sync_dir not in sys.path:
@@ -795,11 +814,11 @@ class App:
                     except Exception:
                         pass
 
-        # Reset router
+                      
         if self._router is not None:
             self._router.reset()
 
-        # Clear event dispatcher and cached tree
+                                                
         self._event_dispatcher.unregister_all()
         self._current_tree = None
         self._desired_tree = None
@@ -809,7 +828,7 @@ class App:
         self._inflight.clear()
         self._inflight_trees.clear()
 
-        # Re-import user modules (parents before children)
+                                                          
         user_modules = [m for m in list(sys.modules.keys()) if m.startswith("app.") or m == "app" or m == "main"]
         user_modules.sort(key=lambda x: (x.count("."), len(x)))
         for mod_name in user_modules:
@@ -824,7 +843,7 @@ class App:
             if hasattr(main_mod, "main"):
                 self.target = main_mod.main
 
-        # Render fresh
+                      
         self.render()
 
         duration_ms = (time.perf_counter() - t0) * 1000
@@ -852,9 +871,9 @@ class App:
 
     def _on_hot_reload(self, filepath: str) -> None:
         """Called by the file watcher when a source file changes."""
-        # Watchdog invokes callbacks on its own thread. Once a renderer is
-        # attached, serialize module replacement and rebuilding with native
-        # events on the normal UI actor.
+                                                                          
+                                                                           
+                                        
         if (self._ui_thread_id is not None
                 and self._ui_thread_id != threading.get_ident()):
             self.run_on_ui(self._on_hot_reload, filepath)
@@ -862,9 +881,9 @@ class App:
 
         snapshot = self.capture_state() if self._preserve_state else None
         try:
-            # Validate the edited unit before mutating any loaded module. A
-            # syntax error must leave the last good preview tree and handlers
-            # in place while the developer fixes the file.
+                                                                           
+                                                                             
+                                                          
             if filepath.endswith(".py") and os.path.isfile(filepath):
                 with open(filepath, "r", encoding="utf-8") as source_file:
                     source = source_file.read()
@@ -873,8 +892,8 @@ class App:
             mod_name = _module_name_for(filepath, self._project_root)
             reloaded: dict[str, Any] = {}
 
-            # Reload leaf modules before package re-exports, and the entry
-            # module last, so a rebuilt router captures the newest screens.
+                                                                          
+                                                                           
             user_modules = _find_user_modules(self._project_root)
             if mod_name and mod_name not in user_modules:
                 user_modules.append(mod_name)
@@ -906,7 +925,7 @@ class App:
                 print("[Pydrud] Keeping the last good preview; waiting for the next edit.")
                 return
 
-            # Re-bind the target if it came from a reloaded module.
+                                                                   
             target_name = getattr(self.target, "__name__", None)
             target_mod = getattr(self.target, "__module__", None)
             if target_mod in reloaded:
@@ -922,9 +941,9 @@ class App:
                 if callable(new_main) and (self.target is None or target_name == "main"):
                     self.target = new_main
 
-            # Generated projects keep the router and app binding in
-            # app.runtime. Reloading that module creates a new router, so
-            # attach it before restoring the previous route.
+                                                                   
+                                                                         
+                                                            
             runtime_mod = reloaded.get("app.runtime") or sys.modules.get("app.runtime")
             main_mod = reloaded.get("app.main") or sys.modules.get("app.main")
             new_router = getattr(main_mod, "router", None)
@@ -938,7 +957,7 @@ class App:
 
             if snapshot is not None:
                 self.restore_state(snapshot)
-            kept = len(snapshot["states"]) + len(snapshot["stores"]) \
+            kept = len(snapshot["states"]) + len(snapshot["stores"])\
                 if snapshot else 0
             print(f"[Pydrud] Hot Reload: {os.path.basename(filepath)}"
                   + (f" (kept {kept} state object(s))" if kept else ""))
@@ -977,7 +996,7 @@ class App:
                 return os.getcwd()
             current = parent
 
-    # ── native service calls ──────────────────────────────────────────────
+                                                                            
 
     def invoke(self, cmd: str, **data) -> Result:
         """Send a command that expects an answer and return a :class:`Result`.
@@ -1015,7 +1034,7 @@ class App:
         for result in pending.values():
             result.fail(reason)
 
-    # ── background work ───────────────────────────────────────────────────
+                                                                            
 
     @property
     def tasks(self) -> TaskRunner:
@@ -1057,14 +1076,14 @@ class App:
             except Exception as exc:
                 self._report_error(exc)
 
-    # ── Router support ────────────────────────────────────────────────────
+                                                                            
 
     def attach_router(self, router) -> None:
         """Attach a Router so the hardware back button pops screens."""
         self._router = router
         router.attach(self)
 
-    # ── bridge internals ──────────────────────────────────────────────────
+                                                                            
 
     def _start_bridge(self, *, retry=True, retry_delay=0.5, max_retries=30):
         """Connect to the Android side via TCP and run the event loop."""
@@ -1083,11 +1102,11 @@ class App:
                 self._transport = sock
                 self._connected = True
 
-                # Push the palette first so the very first frame is drawn
-                # with the app's colours (no white flash, no stock blue).
+                                                                         
+                                                                         
                 self._send_theme()
 
-                # Send the full initial tree.
+                                             
                 if self._current_tree is None:
                     self._build_tree()
                 self._send(self._bridge.encode_full_render(self._current_tree.to_dict()))
@@ -1115,7 +1134,7 @@ class App:
                     break
                 attempts += 1
                 time.sleep(retry_delay)
-            except Exception as exc:  # pragma: no cover — defensive
+            except Exception as exc:                                
                 last_error = exc
                 self._report_error(exc)
                 if not retry:
@@ -1146,9 +1165,28 @@ class App:
             from pydrud.widgets.theme import Theme as _Theme
 
             payload = _Theme.payload()
-        except Exception:  # pragma: no cover - defensive
+        except Exception:                                
             return
         self._send(json.dumps({"cmd": "theme", **payload}) + "\n")
+
+    def _request_system_theme(self) -> None:
+        """Fetch Android 12+ dynamic colours when ``Theme.system()`` opted in."""
+        try:
+            from pydrud.widgets.theme import Theme as _Theme
+            if not _Theme._uses_system() or not self._connected:
+                return
+            self.invoke("system_colors").then(self._apply_system_theme)
+        except Exception as exc:                                             
+            self._report_error(exc)
+
+    def _apply_system_theme(self, palette) -> None:
+        try:
+            from pydrud.widgets.theme import Theme as _Theme
+            if _Theme._apply_system_palette(palette):
+                self._send_theme()
+                self.render()
+        except Exception as exc:
+            self._report_error(exc)
 
     def apply_theme(self) -> None:
         """Re-send the palette and repaint after changing :class:`Theme`.
@@ -1159,13 +1197,14 @@ class App:
             app.apply_theme()
         """
         self._send_theme()
+        self._request_system_theme()
         self.render()
 
     def _reader_loop(self, sock):
         """Background thread: read NDJSON lines from the socket and enqueue them."""
         buffer = b""
-        #: Apply the same hard limit as every other protocol decoder so an
-        #: unauthenticated or buggy peer cannot grow this buffer indefinitely.
+                                                                          
+                                                                              
         max_line = MAX_FRAME_BYTES
         try:
             while self._running and not self._shutdown_event.is_set():
@@ -1196,7 +1235,7 @@ class App:
         except (ConnectionResetError, BrokenPipeError, OSError):
             pass
         finally:
-            self._event_queue.put(None)  # Sentinel: stop the event loop.
+            self._event_queue.put(None)                                  
 
     def _event_loop(self):
         """Process incoming events on the single Python UI actor."""
@@ -1255,8 +1294,8 @@ class App:
             return
 
         if etype == "metrics":
-            # The window changed: rotation, split screen, foldable unfold,
-            # font-scale change, keyboard, new insets.
+                                                                          
+                                                      
             self._handle_metrics(data)
             return
 
@@ -1302,9 +1341,9 @@ class App:
             return
 
         if etype == "protocol_error":
-            # The native renderer rejected a message: a malformed patch, an
-            # unknown op, a version mismatch.  Silence here meant the UI
-            # quietly stopped updating, so surface it like any other error.
+                                                                           
+                                                                        
+                                                                           
             message = str(data.get("message", "")) or "native protocol error"
             code = data.get("code")
             self._report_error(RuntimeError(
@@ -1320,7 +1359,7 @@ class App:
             return
 
         if etype == "job":
-            # WorkManager asking Python to run a registered background job.
+                                                                           
             name = data.get("name", "")
             try:
                 value = self._page.background.run_job(name, data.get("inputs"))
@@ -1395,7 +1434,7 @@ class App:
         """First contact: negotiate native capabilities, then render."""
         self._native_capabilities = dict(d.get("capabilities") or {})
         self._apply_metrics(d)
-        # Device metrics may change the layout — re-render with real sizes.
+                                                                           
         self.render()
 
     def _handle_metrics(self, d: dict) -> None:
@@ -1454,7 +1493,7 @@ class _Page:
     def __init__(self, app: App):
         self._app = app
         self.controls: list[Widget] = []
-        self.floating: list[Widget] = []  # Overlay widgets (e.g. FAB)
+        self.floating: list[Widget] = []                              
         self.title: str = app.title
         self.bgcolor: Optional[str] = None
         self.scroll: Optional[str] = None
@@ -1470,7 +1509,7 @@ class _Page:
         self._snack_callbacks: dict[str, tuple] = {}
         self._snack_seq: int = 0
 
-    # ── content ───────────────────────────────────────────────────────────
+                                                                            
 
     def add(self, *controls: Widget) -> "_Page":
         for control in controls:
@@ -1504,7 +1543,7 @@ class _Page:
                 return found
         return None
 
-    # ── native services ───────────────────────────────────────────────────
+                                                                            
 
     @property
     def services(self):
@@ -1656,7 +1695,7 @@ class _Page:
         """Low-level escape hatch: call any native command and await a Result."""
         return self._app.invoke(cmd, **data)
 
-    # ── concurrency ───────────────────────────────────────────────────────
+                                                                            
 
     def run_task(self, fn: Callable, *args, **kwargs):
         """Run slow work off the UI thread (``async def`` is supported)."""
@@ -1674,7 +1713,7 @@ class _Page:
         """Run *fn* every *interval* seconds until the timer is cancelled."""
         return self._app.tasks.every(interval, fn, *args, **kwargs)
 
-    # ── app commands ──────────────────────────────────────────────────────
+                                                                            
 
     def update(self, *controls: Widget) -> None:
         """Refresh the UI.
@@ -1770,7 +1809,7 @@ class _Page:
             extras["navigation_bar_color"] = navigation_bar_color
         self._send("set_system_ui", **extras)
 
-    # ── UI commands ───────────────────────────────────────────────────────
+                                                                            
 
     def open_drawer(self, side: str = "start") -> None:
         """Open the navigation drawer declared on the Scaffold."""
@@ -1849,7 +1888,7 @@ class _Page:
             Theme.light()
         self._send("theme_mode", mode=mode)
         if mode in ("dark", "light"):
-            # Repaint natively-styled widgets with the new palette.
+                                                                   
             self._app.apply_theme()
 
     def set_theme(self, seed: str, *, dark: Optional[bool] = None) -> None:
@@ -1887,7 +1926,7 @@ class _Page:
     def _send(self, cmd: str, **data) -> None:
         self._app._send(self._app._bridge.encode_command(cmd, **data))
 
-    # ── build ─────────────────────────────────────────────────────────────
+                                                                            
 
     def build(self) -> Widget:
         from pydrud.widgets.layout import Column, Stack
@@ -1913,7 +1952,7 @@ class _Page:
             children=list(self.controls),
         )
 
-        # A Stack keeps floating widgets (FABs, overlays) above the content.
+                                                                            
         return Stack(
             key="_page",
             style=style,
@@ -1922,7 +1961,7 @@ class _Page:
         )
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+                                                                               
 
 
 def _module_name_from_path(filepath: str) -> str:
@@ -1942,11 +1981,11 @@ def _module_name_for(filepath: str, project_root: str) -> str:
     """Map ``<root>/src/app/main.py`` to the module name ``app.main``."""
     try:
         rel = os.path.relpath(os.path.abspath(filepath), os.path.abspath(project_root))
-    except ValueError:  # pragma: no cover — different drives on Windows
+    except ValueError:                                                  
         return ""
     if rel.startswith(".."):
         return ""
-    # Sources live under src/, which is the import root on the device.
+                                                                      
     rel = rel.replace(os.sep, "/")
     if rel.startswith("src/"):
         rel = rel[len("src/"):]
@@ -1973,7 +2012,7 @@ def _find_user_modules(project_root: str) -> list[str]:
     return modules
 
 
-# ── Entry point for Chaquopy (called from Java) ──────────────────────────────
+                                                                               
 
 
 def start_app():

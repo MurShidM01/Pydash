@@ -44,14 +44,14 @@ _PY_TO_SQL = {
     bool: "INTEGER",
     str: "TEXT",
     bytes: "BLOB",
-    dict: "TEXT",   # stored as JSON
-    list: "TEXT",   # stored as JSON
+    dict: "TEXT",                   
+    list: "TEXT",                   
 }
 
 
-#: SQLite identifiers (table and column names) cannot be parameterised, so
-#: they are interpolated into the SQL text. Everything that reaches that
-#: interpolation goes through :func:`_ident` first.
+                                                                          
+                                                                        
+                                                   
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -84,7 +84,7 @@ class Field:
             raise TypeError(
                 f"Unsupported column type {type_!r}. "
                 f"Use one of {sorted(t.__name__ for t in _PY_TO_SQL)}")
-        self.name = ""           # filled in by ModelMeta
+        self.name = ""                                   
         self.type = type_
         self.primary_key = bool(primary_key)
         self.null = bool(null) and not primary_key
@@ -93,7 +93,7 @@ class Field:
         self.default = default
         self.sql_type = _PY_TO_SQL[type_]
 
-    # ── value conversion ─────────────────────────────────────────────────
+                                                                           
 
     def to_db(self, value: Any) -> Any:
         if value is None:
@@ -144,9 +144,9 @@ def column(type_: type = str, **kwargs) -> Field:
     return Field(type_, **kwargs)
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Database
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+          
+                                                                            
 
 
 class Database:
@@ -169,7 +169,7 @@ class Database:
             if foreign_keys:
                 self._conn.execute("PRAGMA foreign_keys=ON")
 
-    # ── raw access ───────────────────────────────────────────────────────
+                                                                           
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -213,7 +213,7 @@ class Database:
         row = self.first(sql, params)
         return next(iter(row.values())) if row else None
 
-    # ── convenience CRUD ─────────────────────────────────────────────────
+                                                                           
 
     def insert(self, table: str, values: dict) -> int:
         if not values:
@@ -255,13 +255,13 @@ class Database:
         return [r["name"]
                 for r in self.query(f'PRAGMA table_info("{_ident(table)}")')]
 
-    # ── transactions ─────────────────────────────────────────────────────
+                                                                           
 
     def transaction(self) -> "_Transaction":
         """Context manager: commits on success, rolls back on exception."""
         return _Transaction(self)
 
-    # ── schema versioning ────────────────────────────────────────────────
+                                                                           
 
     @property
     def version(self) -> int:
@@ -283,7 +283,7 @@ class Database:
             applied.append(migration.version)
         return applied
 
-    # ── models ───────────────────────────────────────────────────────────
+                                                                           
 
     def bind(self, *models: type) -> "Database":
         """Attach model classes to this database and create their tables."""
@@ -294,7 +294,7 @@ class Database:
             model.create_table()
         return self
 
-    # ── lifecycle ────────────────────────────────────────────────────────
+                                                                           
 
     def close(self) -> None:
         if not self._closed:
@@ -372,9 +372,9 @@ def open_database(path: str = ":memory:", **kwargs) -> Database:
     return Database(path, **kwargs)
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# ORM
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+     
+                                                                            
 
 
 def _where_clause(where: dict) -> tuple[str, list]:
@@ -425,7 +425,7 @@ class Query:
         self._limit: Optional[int] = None
         self._offset: int = 0
 
-    # ── chaining ─────────────────────────────────────────────────────────
+                                                                           
 
     def where(self, **conditions) -> "Query":
         clone = self._clone()
@@ -449,7 +449,7 @@ class Query:
         """1-based pagination helper."""
         return self.limit(size, max(0, (int(number) - 1)) * int(size))
 
-    # ── execution ────────────────────────────────────────────────────────
+                                                                           
 
     def sql(self) -> tuple[str, list]:
         clause, params = _where_clause(self._where)
@@ -509,7 +509,7 @@ class Query:
             list(payload.values()) + params)
         return cur.rowcount
 
-    # ── python protocol ──────────────────────────────────────────────────
+                                                                           
 
     def __iter__(self) -> Iterator:
         return iter(self.all())
@@ -559,7 +559,7 @@ class ModelMeta(type):
         if name != "Model" and not namespace.get("__table__"):
             cls.__table__ = name.lower() + "s"
         if name != "Model":
-            # Fail at class-definition time rather than on the first query.
+                                                                           
             _ident(cls.__table__)
             for field_name in fields:
                 _ident(field_name)
@@ -588,7 +588,7 @@ class Model(metaclass=ModelMeta):
             else:
                 setattr(self, name, field.make_default())
 
-    # ── class helpers ────────────────────────────────────────────────────
+                                                                           
 
     @classmethod
     def _db(cls) -> Database:
@@ -604,7 +604,7 @@ class Model(metaclass=ModelMeta):
         exists = "IF NOT EXISTS " if if_not_exists else ""
         db = cls._db()
         db.execute(f'CREATE TABLE {exists}"{cls.__table__}" ({columns})')
-        # Add columns introduced after the table was first created.
+                                                                   
         present = set(db.columns(cls.__table__))
         for field in cls.__fields__.values():
             if field.name not in present:
@@ -686,7 +686,7 @@ class Model(metaclass=ModelMeta):
             setattr(instance, name, field.from_db(row.get(name)))
         return instance
 
-    # ── instance API ─────────────────────────────────────────────────────
+                                                                           
 
     def save(self):
         """INSERT when the row is new, UPDATE when it already has an id."""

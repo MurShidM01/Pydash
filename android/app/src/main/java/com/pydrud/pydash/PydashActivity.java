@@ -38,6 +38,13 @@ public class PydashActivity extends AppCompatActivity {
     /** Live CameraX previews, keyed by widget key. */
     private final java.util.Map<String, androidx.camera.view.PreviewView>
         cameraPreviews = new java.util.HashMap<>();
+    /** Optional Pydrud fallback slots, shown until CameraX is usable. */
+    private final java.util.Map<String, View> cameraFallbacks = new java.util.HashMap<>();
+    private final java.util.Map<String, String> cameraFacings = new java.util.HashMap<>();
+    private final java.util.Map<Integer, String> pendingCameraPermissions =
+        new java.util.HashMap<>();
+    private int cameraPermissionRequestCode = 18000;
+    private int scanFormats = 0;
     private androidx.camera.core.ImageCapture imageCapture;
     private androidx.camera.lifecycle.ProcessCameraProvider cameraProvider;
     private String cameraFacing = "back";
@@ -95,9 +102,13 @@ public class PydashActivity extends AppCompatActivity {
 
         // A deep link (myapp://route), launcher shortcut or notification tap
         // may have started us — forward it once Python is listening.
-        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+        // Modern back handling: Android 13+ predictive back gestures only
+        // animate correctly when the press goes through the dispatcher;
+        // overriding the deprecated onBackPressed() bypasses it entirely.
+        backCallback = new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() { requestPydrudBack(); }
-        });
+        };
+        getOnBackPressedDispatcher().addCallback(this, backCallback);
 
         handleDeepLinkIntent(getIntent());
 
@@ -238,6 +249,18 @@ public class PydashActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
                                            int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        String cameraKey = pendingCameraPermissions.remove(requestCode);
+        if (cameraKey != null) {
+            boolean granted = grantResults.length > 0
+                && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            if (granted) {
+                startCamera(cameraKey, cameraFacings.get(cameraKey));
+            } else {
+                emitCameraError(cameraKey, "permission_denied",
+                    "Camera permission was denied");
+            }
+            return;
+        }
         if (bridge != null) {
             bridge.services().onPermissionResult(requestCode, permissions, grantResults);
         }
@@ -404,19 +427,19 @@ public class PydashActivity extends AppCompatActivity {
     }
 
     // ── Back button ───────────────────────────────────────────────────────
+    //
+    // No deprecated onBackPressed() override here: every press arrives via
+    // the OnBackPressedDispatcher callback registered in onCreate, so the
+    // Android 13+ predictive back gesture animates and stays interceptable.
 
-    @Override
-    @SuppressWarnings("deprecation")
-    public void onBackPressed() {
-        requestPydrudBack();
-    }
+    private OnBackPressedCallback backCallback;
 
     private void requestPydrudBack() {
         // Ask Python first: the Router may want to pop a screen. Only fall
         // back to the default behaviour if Python does not answer in time
         // or reports that it did not handle the press.
         if (bridge == null || !bridge.isConnected()) {
-            super.onBackPressed();
+            defaultBack();
             return;
         }
         if (awaitingBackResult) return;
@@ -445,7 +468,42 @@ public class PydashActivity extends AppCompatActivity {
     }
 
     private void defaultBack() {
-        super.onBackPressed();
+        // Run the dispatcher's default action (finish + system animation)
+        // without re-entering our own callback.
+        if (backCallback != null) backCallback.setEnabled(false);
+        getOnBackPressedDispatcher().onBackPressed();
+        if (backCallback != null) backCallback.setEnabled(true);
+    }
+
+    // ── Soft keyboard ─────────────────────────────────────────────────────
+
+    /**
+     * Tap-outside-to-dismiss: when a touch lands outside the focused text
+     * field, the keyboard hides and the field loses focus — so users never
+     * have to hunt for the hardware/system back button to close it.
+     */
+    @Override
+    public boolean dispatchTouchEvent(android.view.MotionEvent event) {
+        if (event.getAction() == android.view.MotionEvent.ACTION_DOWN) {
+            android.view.View focused = getCurrentFocus();
+            if (focused instanceof android.widget.EditText) {
+                android.graphics.Rect bounds = new android.graphics.Rect();
+                focused.getGlobalVisibleRect(bounds);
+                if (!bounds.contains((int) event.getRawX(), (int) event.getRawY())) {
+                    hideKeyboard(focused);
+                }
+            }
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    /** Hide the soft keyboard and clear focus from a text field. */
+    public void hideKeyboard(android.view.View focused) {
+        android.view.inputmethod.InputMethodManager imm =
+            (android.view.inputmethod.InputMethodManager)
+                getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null) imm.hideSoftInputFromWindow(focused.getWindowToken(), 0);
+        focused.clearFocus();
     }
 
     // ── Lifecycle → Python ────────────────────────────────────────────────
@@ -517,10 +575,34 @@ public class PydashActivity extends AppCompatActivity {
     /** Register a preview surface created by ViewFactory. */
     public void bindCameraPreview(final String key,
                                   final androidx.camera.view.PreviewView preview,
+                                  final View fallback,
                                   final org.json.JSONObject props) {
         cameraPreviews.put(key, preview);
+        if (fallback != null) cameraFallbacks.put(key, fallback);
+        else cameraFallbacks.remove(key);
         cameraFacing = props.optString("facing", "back");
-        startCamera(key, cameraFacing);
+        cameraFacings.put(key, cameraFacing);
+        scanning = props.optBoolean("scan", false);
+        scanKey = scanning ? key : "";
+        scanFormats = barcodeFormats(props.optJSONArray("scanFormats"));
+
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this,
+                android.Manifest.permission.CAMERA)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            startCamera(key, cameraFacing);
+        } else if (!cameraPermissionDeclared()) {
+            emitCameraError(key, "permission_not_declared",
+                "Camera permission is missing from AndroidManifest.xml. "
+                + "Add CAMERA to pydrud.yaml and run pydrud sync.");
+        } else if (props.optBoolean("autoRequestPermission", true)) {
+            int code = ++cameraPermissionRequestCode;
+            pendingCameraPermissions.put(code, key);
+            androidx.core.app.ActivityCompat.requestPermissions(this,
+                new String[] { android.Manifest.permission.CAMERA }, code);
+        } else {
+            emitCameraError(key, "permission_required",
+                "Camera permission is required before mounting CameraPreview");
+        }
     }
 
     /** Bind (or rebind) CameraX to the lifecycle for a preview widget. */
@@ -531,7 +613,7 @@ public class PydashActivity extends AppCompatActivity {
                 ? cameraPreviews.values().iterator().next()
                 : cameraPreviews.get(key));
         if (preview == null) return;
-        cameraFacing = facing;
+        cameraFacing = facing == null || facing.isEmpty() ? "back" : facing;
 
         final com.google.common.util.concurrent.ListenableFuture<
             androidx.camera.lifecycle.ProcessCameraProvider> future =
@@ -557,7 +639,7 @@ public class PydashActivity extends AppCompatActivity {
                         .setBackpressureStrategy(androidx.camera.core.ImageAnalysis
                             .STRATEGY_KEEP_ONLY_LATEST)
                         .build();
-                    imageAnalysis.setAnalyzer(cameraExecutor, new BarcodeAnalyzer());
+                    imageAnalysis.setAnalyzer(cameraExecutor, new BarcodeAnalyzer(scanFormats));
                     androidx.camera.core.CameraSelector selector =
                         "front".equals(cameraFacing)
                         ? androidx.camera.core.CameraSelector.DEFAULT_FRONT_CAMERA
@@ -566,18 +648,71 @@ public class PydashActivity extends AppCompatActivity {
                     camera = cameraProvider.bindToLifecycle(
                         PydashActivity.this, selector,
                         previewUseCase, imageCapture, videoCapture, imageAnalysis);
+                    showCameraFallback(key, false);
                     org.json.JSONObject data = new org.json.JSONObject();
                     data.put("facing", cameraFacing);
-                    eventDispatcher.dispatch("ready", key, data);
+                    if (eventDispatcher != null) eventDispatcher.dispatch("ready", key, data);
                 } catch (Exception e) {
                     Log.e(TAG, "camera bind failed", e);
-                    org.json.JSONObject data = new org.json.JSONObject();
-                    try { data.put("error", String.valueOf(e.getMessage())); }
-                    catch (Exception ignored) { }
-                    eventDispatcher.dispatch("error", key, data);
+                    emitCameraError(key, "camera_unavailable",
+                        String.valueOf(e.getMessage()));
                 }
             }
         }, androidx.core.content.ContextCompat.getMainExecutor(this));
+    }
+
+    private boolean cameraPermissionDeclared() {
+        try {
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(
+                getPackageName(), android.content.pm.PackageManager.GET_PERMISSIONS);
+            if (info.requestedPermissions == null) return false;
+            for (String permission : info.requestedPermissions) {
+                if (android.Manifest.permission.CAMERA.equals(permission)) return true;
+            }
+        } catch (Exception ignored) { }
+        return false;
+    }
+
+    private void showCameraFallback(String key, boolean show) {
+        View fallback = cameraFallbacks.get(key);
+        if (fallback != null) fallback.setVisibility(show ? View.VISIBLE : View.GONE);
+        androidx.camera.view.PreviewView preview = cameraPreviews.get(key);
+        if (preview != null) preview.setVisibility(show ? View.GONE : View.VISIBLE);
+    }
+
+    /** Report all camera startup failures through the Python widget event. */
+    private void emitCameraError(String key, String code, String message) {
+        showCameraFallback(key, true);
+        if (eventDispatcher == null) return;
+        org.json.JSONObject data = new org.json.JSONObject();
+        try {
+            data.put("code", code);
+            data.put("error", message == null ? code : message);
+        } catch (Exception ignored) { }
+        eventDispatcher.dispatch("error", key, data);
+    }
+
+    private int barcodeFormats(org.json.JSONArray formats) {
+        if (formats == null || formats.length() == 0) return 0;
+        int result = 0;
+        for (int i = 0; i < formats.length(); i++) {
+            String value = formats.optString(i, "").toUpperCase(
+                java.util.Locale.US).replace('-', '_');
+            if ("QR".equals(value) || "QR_CODE".equals(value)) {
+                result |= com.google.mlkit.vision.barcode.common.Barcode.FORMAT_QR_CODE;
+            } else if ("EAN_13".equals(value)) {
+                result |= com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_13;
+            } else if ("EAN_8".equals(value)) {
+                result |= com.google.mlkit.vision.barcode.common.Barcode.FORMAT_EAN_8;
+            } else if ("CODE_128".equals(value)) {
+                result |= com.google.mlkit.vision.barcode.common.Barcode.FORMAT_CODE_128;
+            } else if ("CODE_39".equals(value)) {
+                result |= com.google.mlkit.vision.barcode.common.Barcode.FORMAT_CODE_39;
+            } else if ("PDF417".equals(value)) {
+                result |= com.google.mlkit.vision.barcode.common.Barcode.FORMAT_PDF417;
+            }
+        }
+        return result;
     }
 
     public void stopCamera() {
@@ -677,8 +812,18 @@ public class PydashActivity extends AppCompatActivity {
     /** ML Kit analyzer that reports barcodes as `scan` events. */
     private class BarcodeAnalyzer
             implements androidx.camera.core.ImageAnalysis.Analyzer {
-        private final com.google.mlkit.vision.barcode.BarcodeScanner scanner =
-            com.google.mlkit.vision.barcode.BarcodeScanning.getClient();
+        private final com.google.mlkit.vision.barcode.BarcodeScanner scanner;
+
+        BarcodeAnalyzer(int formats) {
+            if (formats == 0) {
+                scanner = com.google.mlkit.vision.barcode.BarcodeScanning.getClient();
+            } else {
+                com.google.mlkit.vision.barcode.BarcodeScannerOptions options =
+                    new com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
+                        .setBarcodeFormats(formats).build();
+                scanner = com.google.mlkit.vision.barcode.BarcodeScanning.getClient(options);
+            }
+        }
 
         @Override
         @androidx.camera.core.ExperimentalGetImage

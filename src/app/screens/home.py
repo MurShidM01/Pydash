@@ -82,7 +82,7 @@ def _idle_card() -> Widget:
                      color=Theme.text_secondary),
                 Button("Scan QR code", key="pd_home_scan", icon=Icons.QR_CODE,
                        full_width=True, size="lg"
-                       ).on_click(lambda _e: router.push("scan")),
+                       ).on_click(lambda _e: router.push("scan", mode="scan")),
                 Button("Connect manually", key="pd_home_manual",
                        variant="tonal", icon=Icons.EDIT, full_width=True
                        ).on_click(lambda _e: router.push("scan",
@@ -201,7 +201,7 @@ def _failed_card() -> Widget:
                                ).on_click(lambda _e: session.reconnect()),
                         Button("Scan again", key="pd_home_rescan",
                                variant="tonal", icon=Icons.QR_CODE
-                               ).on_click(lambda _e: router.push("scan")),
+                               ).on_click(lambda _e: router.push("scan", mode="scan")),
                     ],
                 ),
             ],

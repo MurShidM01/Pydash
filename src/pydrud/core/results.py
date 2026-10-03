@@ -18,6 +18,7 @@ app while a date picker is open).
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from typing import Any, Callable, Optional
 
@@ -44,7 +45,7 @@ class Result:
         self._errbacks: list[Callable[[str], Any]] = []
         self._lock = threading.Lock()
 
-    # ── identity ─────────────────────────────────────────────────────────
+                                                                           
 
     @property
     def request_id(self) -> str:
@@ -66,7 +67,7 @@ class Result:
     def error(self) -> Optional[str]:
         return self._error
 
-    # ── completion (called by the bridge) ────────────────────────────────
+                                                                           
 
     def complete(self, value: Any) -> bool:
         """Resolve successfully. Returns False if already settled."""
@@ -102,7 +103,7 @@ class Result:
             self._cancelled = True
         return self.fail("cancelled")
 
-    # ── consumption ──────────────────────────────────────────────────────
+                                                                           
 
     def then(self, callback: Callable[[Any], Any]) -> "Result":
         """Run *callback(value)* when the call succeeds (immediately if done)."""
@@ -151,6 +152,41 @@ class Result:
             raise ResultError(f"{self._cmd or 'call'} failed: {self._error}")
         return self._value
 
+    def __await__(self):
+        """Await this native response from an ``async def`` handler.
+
+        Bridge responses are delivered by Pydrud's UI thread while asyncio
+        handlers may run on a worker-loop.  A plain ``threading.Event`` can't
+        be awaited, so completion is forwarded safely to the caller's loop.
+        The callback path remains available for existing applications.
+
+        ::
+
+            granted = await page.permissions.request("camera")
+            accepted = await page.dialog.confirm("Delete this item?")
+        """
+        return self._await_result().__await__()
+
+    async def _await_result(self) -> Any:
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+
+        def resolve(value: Any) -> None:
+            def set_value() -> None:
+                if not future.done():
+                    future.set_result(value)
+            loop.call_soon_threadsafe(set_value)
+
+        def reject(message: str) -> None:
+            def set_error() -> None:
+                if not future.done():
+                    future.set_exception(ResultError(
+                        f"{self._cmd or 'call'} failed: {message}"))
+            loop.call_soon_threadsafe(set_error)
+
+        self.then(resolve).catch(reject)
+        return await future
+
     def __repr__(self) -> str:
         state = "pending"
         if self._error:
@@ -163,5 +199,5 @@ class Result:
 def _safe(callback: Callable, arg: Any) -> None:
     try:
         callback(arg)
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:                                
         print(f"[Pydrud] result callback error: {exc}")

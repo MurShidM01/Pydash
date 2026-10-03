@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import warnings
 
-from pydrud.runtime.app import *  # noqa: F401,F403
-from pydrud.runtime.app import App, MAX_PATCHES, _module_name_for  # noqa: F401
+from pydrud.runtime.app import *                   
+from pydrud.runtime.app import App, MAX_PATCHES, _module_name_for              
 
 warnings.warn(
     "pydrud.main is deprecated; import from pydrud (or pydrud.runtime.app)",

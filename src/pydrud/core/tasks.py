@@ -72,7 +72,7 @@ class TaskRunner:
         self._timers: list["Timer"] = []
         self._closed = False
 
-    # ── tasks ────────────────────────────────────────────────────────────
+                                                                           
 
     def run(self, fn: Callable, *args, **kwargs) -> PydrudFuture:
         """Run *fn* on a worker thread and return a :class:`Future`.
@@ -96,11 +96,11 @@ class TaskRunner:
 
                 return asyncio.run(value)
             return value
-        except BaseException as exc:  # noqa: BLE001 - report, then preserve Future failure
+        except BaseException as exc:                                                       
             self._report(exc)
             raise
 
-    # ── timers ───────────────────────────────────────────────────────────
+                                                                           
 
     def after(self, delay: float, fn: Callable, *args, **kwargs) -> "Timer":
         """Run *fn* once after *delay* seconds."""
@@ -121,7 +121,7 @@ class TaskRunner:
             self._timers = [t for t in self._timers if t.active]
             self._timers.append(timer)
 
-    # ── shutdown ─────────────────────────────────────────────────────────
+                                                                           
 
     def shutdown(self, wait: bool = False) -> None:
         with self._lock:
@@ -173,7 +173,7 @@ class Timer:
 
     @property
     def active(self) -> bool:
-        return self._thread is not None and self._thread.is_alive() \
+        return self._thread is not None and self._thread.is_alive()\
             and not self._cancelled.is_set()
 
     def start(self) -> "Timer":
@@ -194,7 +194,7 @@ class Timer:
             try:
                 self._fn(*self._args, **self._kwargs)
                 self.ticks += 1
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:                
                 if self._runner is not None:
                     self._runner._report(exc)
                 else:
@@ -224,7 +224,7 @@ def debounce(seconds: float):
                 state["timer"] = new_timer
                 new_timer.start()
 
-        wrapper.cancel = lambda: state["timer"] and state["timer"].cancel()  # type: ignore[attr-defined]
+        wrapper.cancel = lambda: state["timer"] and state["timer"].cancel()                              
         wrapper.__name__ = getattr(fn, "__name__", "debounced")
         wrapper.__doc__ = fn.__doc__
         return wrapper

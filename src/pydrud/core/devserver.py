@@ -58,7 +58,7 @@ class DevServer:
         if self._running:
             return True
 
-        # Try requested port, then a few sequential ports if occupied
+                                                                     
         bound = False
         port_range = [self.requested_port] if self.requested_port == 0 else range(self.requested_port, self.requested_port + 5)
         for p in port_range:

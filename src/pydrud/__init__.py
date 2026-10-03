@@ -53,6 +53,7 @@ from pydrud.widgets import (
     PhoneField,
     UrlField,
     Image,
+    SvgPicture,
     Icon,
     Checkbox,
     Switch,
@@ -144,7 +145,7 @@ from pydrud.widgets import (
     matches,
     custom,
     Canvas, Paint, Path, radial_point,
-    CameraPreview, MapView, Marker, RichText, Span, Markdown,
+    CameraPreview, QRScanner, MapView, Marker, RichText, Span, Markdown,
     ReorderableList, InfiniteList,
     Expanded, Flexible, Align, ColoredBox, DecoratedBox, ConstrainedBox,
     LimitedBox, Gap, VerticalDivider, SingleChildScrollView, Wrap, ButtonBar,
@@ -211,6 +212,7 @@ __all__ = [
     "PhoneField",
     "UrlField",
     "Image",
+    "SvgPicture",
     "Icon",
     "Checkbox",
     "Switch",
@@ -301,12 +303,13 @@ __all__ = [
     "pattern",
     "matches",
     "custom",
-    # v1.3 — painting, hardware, maps, rich text and big lists
+                                                              
     "Canvas",
     "Paint",
     "Path",
     "radial_point",
     "CameraPreview",
+    "QRScanner",
     "MapView",
     "Marker",
     "RichText",
@@ -314,7 +317,7 @@ __all__ = [
     "Markdown",
     "ReorderableList",
     "InfiniteList",
-    # Flutter-style presets and common compositions
+                                                   
     "Expanded",
     "Flexible",
     "Align",
@@ -355,7 +358,7 @@ __all__ = [
     "SettingsTile",
     "NavigationTile",
     "FormSection",
-    # v1.3 — data layer
+                       
     "Database",
     "Model",
     "Field",
@@ -364,7 +367,7 @@ __all__ = [
     "Migration",
     "Cache",
     "cached",
-    # v1.3 — explicit animation
+                               
     "AnimationController",
     "Tween",
     "curve",

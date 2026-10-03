@@ -9,16 +9,16 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Background work (page.background.schedule / start_service). -->
-
-    <!-- Camera for QR scanning. -->
     <uses-permission android:name="android.permission.CAMERA" />
-
     <!--
       Dangerous permissions are intentionally NOT declared by default: Play
       rejects apps that request what they do not use. Add the ones your app
-      needs with `pydrud permissions add camera`, or uncomment them here,
-      then request them at runtime with page.permissions.request("camera").
+      needs with `pydrud permissions add camera` (or `permissions:` in
+      pydrud.yaml), then run `pydrud sync` and request them at runtime with
+      page.permissions.request("camera"). This generated manifest is never
+      the source of truth, so do not uncomment entries here.
 
+      <uses-permission android:name="android.permission.CAMERA" />
       <uses-permission android:name="android.permission.RECORD_AUDIO" />
       <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
       <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
@@ -32,8 +32,15 @@
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
+    <!--
+      Cleartext HTTP is allowed by default so local development servers,
+      LAN devices and plain-http intranet APIs work out of the box
+      (Android 9+ blocks them otherwise). Shipping an app that only talks
+      HTTPS? Set ``cleartext_traffic: false`` in pydrud.yaml and re-sync.
+    -->
     <application
         android:allowBackup="true"
+        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:label="Pydash"

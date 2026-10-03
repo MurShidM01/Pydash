@@ -114,7 +114,7 @@ def _open_connection(_event) -> None:
     if session.is_live or session.is_busy:
         router.push("preview")
     else:
-        router.push("scan")
+        router.push("scan", mode="scan")
 
 
 def _tab_body(tab: int, builder) -> Widget:

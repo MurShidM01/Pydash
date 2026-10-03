@@ -75,6 +75,54 @@ class TestApp(unittest.TestCase):
         router.push("scan", mode="manual")
         self.assertTrue(self.app.shows("PASTE THE CONNECTION URI"))
 
+    def test_scan_screen_resets_to_camera_mode_after_manual_mode(self):
+        # 1. Open manual mode
+        router.push("scan", mode="manual")
+        self.assertTrue(self.app.shows("PASTE THE CONNECTION URI"))
+
+        # 2. Go back to Home
+        router.pop()
+        self.assertTrue(self.app.shows("Scan QR code"))
+
+        # 3. Open scan screen again via "Scan QR code"
+        router.push("scan")
+        self.assertTrue(self.app.shows("Connect to a dev server"))
+        self.assertFalse(self.app.shows("PASTE THE CONNECTION URI"))
+
+    def test_scan_screen_mode_toggle_switches_between_camera_and_manual(self):
+        router.push("scan")
+        self.assertFalse(self.app.shows("PASTE THE CONNECTION URI"))
+
+        # Switch to manual using toggle
+        self.app.toggle("pd_scan_mode_toggle", 1)
+        self.assertTrue(self.app.shows("PASTE THE CONNECTION URI"))
+
+        # Switch back to camera using toggle
+        self.app.toggle("pd_scan_mode_toggle", 0)
+        self.assertFalse(self.app.shows("PASTE THE CONNECTION URI"))
+
+        # Switch to manual using manual link
+        self.app.tap("pd_scan_manual_link")
+        self.assertTrue(self.app.shows("PASTE THE CONNECTION URI"))
+
+        # Switch back to camera using switch camera button
+        self.app.tap("pd_scan_switch_camera")
+        self.assertFalse(self.app.shows("PASTE THE CONNECTION URI"))
+
+    def test_home_scan_and_manual_buttons_navigate_to_correct_modes(self):
+        # Tap 'Connect manually' on home
+        self.app.tap("pd_home_manual")
+        self.assertTrue(self.app.shows("PASTE THE CONNECTION URI"))
+
+        # Go back
+        self.app.tap("pd_scan_back")
+        self.assertTrue(self.app.shows("Scan QR code"))
+
+        # Tap 'Scan QR code' on home
+        self.app.tap("pd_home_scan")
+        self.assertTrue(self.app.shows("Connect to a dev server"))
+        self.assertFalse(self.app.shows("PASTE THE CONNECTION URI"))
+
     def test_preview_screen_explains_idle_state(self):
         router.push("preview")
         self.assertTrue(self.app.shows("No live session"))

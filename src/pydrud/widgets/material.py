@@ -30,9 +30,9 @@ def _clean(d: dict) -> dict:
     return {k: v for k, v in d.items() if v is not None}
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Lists
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+       
+                                                                            
 
 
 class ListTile(Widget):
@@ -73,8 +73,8 @@ class ListTile(Widget):
 
         self.leading_icon: Optional[str] = None
         self.trailing_icon: Optional[str] = None
-        # Keys given by the caller are preserved — they are how events and
-        # patches find the widget again.
+                                                                          
+                                        
         if isinstance(leading, Widget):
             if leading._auto_key:
                 leading.key = f"{self.key}_leading"
@@ -142,9 +142,9 @@ class ExpansionTile(Widget):
         return props
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Small informational widgets
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+                             
+                                                                            
 
 
 class Chip(Widget):
@@ -381,9 +381,9 @@ class Tooltip(Widget):
         return {**self._extra, "message": self.message}
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Navigation
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+            
+                                                                            
 
 
 class Tab:
@@ -474,13 +474,13 @@ class Tabs(Widget):
         scrollable: bool = False,
         mode: Optional[str] = None,
         on_change: Optional[Callable] = None,
-        # indicator
+                   
         indicator: str = "line",
         indicator_color: Optional[str] = None,
         indicator_height: Optional[float] = None,
         indicator_radius: Optional[float] = None,
         indicator_size: str = "label",
-        # labels
+                
         label_color: Optional[str] = None,
         unselected_label_color: Optional[str] = None,
         label_size: Optional[float] = None,
@@ -488,12 +488,12 @@ class Tabs(Widget):
         bold_selected: bool = True,
         uppercase: bool = False,
         show_labels: bool = True,
-        # icons
+               
         icon_size: Optional[float] = None,
         icon_position: str = "top",
         icon_color: Optional[str] = None,
         selected_icon_color: Optional[str] = None,
-        # surface
+                 
         bg: Optional[str] = None,
         elevation: Optional[float] = None,
         radius: Optional[float] = None,
@@ -505,17 +505,17 @@ class Tabs(Widget):
         divider_color: Optional[str] = None,
         ripple: bool = True,
         ripple_color: Optional[str] = None,
-        # motion
+                
         animate: bool = True,
         duration: Optional[int] = None,
         key: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(key=key, **kwargs)
-        # Accept the convenient shorthands as well as Tab objects:
-        #   Tabs(["One", "Two"])            — labels only
-        #   Tabs([("Inbox", Icons.EMAIL)])  — label + icon
-        #   Tabs([{"label": "A", "badge": 3}])
+                                                                  
+                                                         
+                                                          
+                                              
         self._pending_children = list(self.children)
         self.tabs: list[Tab] = [Tabs._as_tab(t) for t in (tabs or [])]
         self.selected = max(0, min(int(selected), max(0, len(self.tabs) - 1)))
@@ -573,7 +573,7 @@ class Tabs(Widget):
             self.event_handlers["change"] = on_change
         self._sync_children()
 
-    # ── behaviour ───────────────────────────────────────────────────────
+                                                                          
 
     def select(self, index: int) -> "Tabs":
         """Programmatically switch tab (chainable)."""
@@ -597,9 +597,9 @@ class Tabs(Widget):
         return Tab(str(tab))
 
     def _sync_children(self) -> None:
-        # Tabs declared without content keep whatever children the caller
-        # passed in, so `Tabs(["A", "B"], children=[body])` renders a body
-        # instead of silently dropping it.
+                                                                         
+                                                                          
+                                          
         self.children = list(getattr(self, "_pending_children", []))
         if not self.tabs:
             return
@@ -659,7 +659,7 @@ class Tabs(Widget):
         return props
 
 
-#: ``TabBar`` reads better when the tabs have no inline content.
+                                                                
 TabBar = Tabs
 
 
@@ -762,7 +762,7 @@ class BottomNavigationBar(Widget):
         *,
         selected: int = 0,
         on_change: Optional[Callable] = None,
-        # surface
+                 
         bg: Optional[str] = None,
         height: Optional[float] = None,
         elevation: Optional[float] = None,
@@ -776,13 +776,13 @@ class BottomNavigationBar(Widget):
         divider_color: Optional[str] = None,
         item_padding: Optional[float] = None,
         icon_label_gap: Optional[float] = None,
-        # indicator
+                   
         indicator: str = "pill",
         indicator_color: Optional[str] = None,
         indicator_width: Optional[float] = None,
         indicator_height: Optional[float] = None,
         indicator_radius: Optional[float] = None,
-        # icons / labels
+                        
         selected_color: Optional[str] = None,
         unselected_color: Optional[str] = None,
         icon_size: Optional[float] = None,
@@ -793,10 +793,10 @@ class BottomNavigationBar(Widget):
         selected_label_size: Optional[float] = None,
         bold_selected: bool = True,
         max_label_lines: int = 1,
-        # badges
+                
         badge_color: Optional[str] = None,
         badge_text_color: Optional[str] = None,
-        # behaviour
+                   
         type: str = "fixed",
         ripple: bool = True,
         ripple_color: Optional[str] = None,
@@ -868,15 +868,15 @@ class BottomNavigationBar(Widget):
         if on_change is not None:
             self.event_handlers["change"] = on_change
 
-        # Layout hints for the native renderer. The bar draws its own
-        # gesture inset and floating margin (see PydrudNavBar), so it opts
-        # *out* of the generic safe-area padding to avoid doubling it.
+                                                                     
+                                                                          
+                                                                      
         self.style.setdefault("width", "match")
         self.style.setdefault("height", self.height
                               if self.height is not None else _nav_height())
         self.style["safeAreaBottom"] = False
 
-    # ── behaviour ───────────────────────────────────────────────────────
+                                                                          
 
     @property
     def current(self) -> Optional[NavItem]:
@@ -902,7 +902,7 @@ class BottomNavigationBar(Widget):
             self.items[index].badge = value
         return self
 
-    # ── layout hint used by Scaffold ────────────────────────────────────
+                                                                          
 
     @property
     def effective_height(self) -> float:
@@ -961,7 +961,7 @@ class BottomNavigationBar(Widget):
         return props
 
 
-#: Flutter calls the Material 3 version ``NavigationBar``.
+                                                          
 NavigationBar = BottomNavigationBar
 
 
@@ -1061,7 +1061,7 @@ class SegmentedButton(Widget):
         self.options = [str(o) for o in (options or [])]
         self.multi = multi
         if multi:
-            self.selected = list(selected) if isinstance(selected, (list, tuple)) \
+            self.selected = list(selected) if isinstance(selected, (list, tuple))\
                 else ([selected] if isinstance(selected, int) else [])
         else:
             self.selected = selected if isinstance(selected, int) else 0
@@ -1080,9 +1080,9 @@ class SegmentedButton(Widget):
         return props
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# Input & feedback
-# ──────────────────────────────────────────────────────────────────────────
+                                                                            
+                  
+                                                                            
 
 
 class SearchBar(Widget):

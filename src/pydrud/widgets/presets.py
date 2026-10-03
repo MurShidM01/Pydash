@@ -28,7 +28,7 @@ from pydrud.widgets.tokens import Tokens
 Size = Union[float, int, str]
 
 
-# ── Layout ──────────────────────────────────────────────────────────────────
+                                                                              
 
 
 class Expanded(Container):
@@ -163,7 +163,7 @@ class ButtonBar(Row):
                          vertical_alignment="center", **kwargs)
 
 
-# ── Typography and images ───────────────────────────────────────────────────
+                                                                              
 
 
 class Heading(Text):
@@ -273,7 +273,7 @@ class Placeholder(Container):
                          alignment="center", style=style, **kwargs)
 
 
-# ── Material controls ───────────────────────────────────────────────────────
+                                                                              
 
 
 class SwitchListTile(ListTile):
@@ -350,7 +350,7 @@ class MenuButton(IconButton):
         super().__init__(Icons.MORE_VERT, text="", on_click=on_click, **kwargs)
 
 
-# ── Common app compositions ─────────────────────────────────────────────────
+                                                                              
 
 
 class SectionHeader(Row):

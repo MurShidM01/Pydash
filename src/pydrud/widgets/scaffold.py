@@ -81,7 +81,7 @@ class Scaffold(Widget):
 
         self.children = [self._build()]
 
-    # ── internals ────────────────────────────────────────────────────────
+                                                                           
 
     def _adapt(self) -> None:
         """On wide windows, move the bottom destinations into a side rail.
@@ -124,8 +124,8 @@ class Scaffold(Widget):
 
         body_style: dict = {"width": "match", "height": 0}
         if self.content_max_width:
-            # Caps and centres the content column on tablets and desktops,
-            # so text lines stay readable instead of spanning the window.
+                                                                          
+                                                                         
             body_style["maxWidth"] = self.content_max_width
             body_style["alignment"] = "topCenter"
         body_container = Container(
@@ -135,7 +135,7 @@ class Scaffold(Widget):
             child=self.body,
         )
         if self.navigation_rail is not None:
-            # Rail sits beside the body, so wrap them in a Row.
+                                                               
             from pydrud.widgets.layout import Row
 
             column_children.append(Row(
@@ -175,8 +175,8 @@ class Scaffold(Widget):
                 fab.style.pop("left", None)
                 fab.style["alignment"] = "bottomCenter"
 
-            # Lift the FAB above a bottom bar instead of letting it sit on
-            # top of the navigation items.
+                                                                          
+                                          
             bar = self.bottom_navigation or self.bottom_bar
             if bar is not None and not fab.style.get("_fabLifted"):
                 from pydrud.widgets.tokens import Tokens
@@ -227,15 +227,15 @@ class Scaffold(Widget):
                   or (body_container if top is not body_container else None)
                   or body_container)
         top.style.setdefault("safeAreaTop", True)
-        # A widget that already draws its own inset (bottom navigation) sets
-        # safeAreaBottom=False, so setdefault leaves that decision alone.
+                                                                            
+                                                                         
         bottom.style.setdefault("safeAreaBottom", True)
 
     def rebuild(self) -> None:
         """Re-create the internal layout (after mutating body/app_bar/…)."""
         self.children = [self._build()]
 
-    # ── serialisation ────────────────────────────────────────────────────
+                                                                           
 
     def _serialise_props(self) -> dict:
         return {}

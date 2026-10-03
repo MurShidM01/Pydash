@@ -32,17 +32,17 @@ class Tokens:
     through :meth:`Theme.configure`, which validates names.
     """
 
-    # ── shape ────────────────────────────────────────────────────────────
+                                                                           
     radius_button: float = 14
     radius_card: float = 16
     radius_input: float = 14
-    radius_chip: float = 999          # pill
+    radius_chip: float = 999                
     radius_sheet: float = 24
     radius_dialog: float = 24
     radius_fab: float = 28
     radius_image: float = 12
 
-    # ── size ─────────────────────────────────────────────────────────────
+                                                                           
     app_bar_height: float = 56
     nav_height: float = 64
     rail_width: float = 80
@@ -59,13 +59,13 @@ class Tokens:
     list_tile_height: float = 56
     list_tile_height_two_line: float = 72
 
-    # ── spacing ──────────────────────────────────────────────────────────
-    gutter: float = 20                # page side padding
-    section: float = 24               # gap between sections
+                                                                           
+    gutter: float = 20                                   
+    section: float = 24                                     
     card_padding: float = 16
-    content_max_width: float = 0      # 0 = unconstrained
+    content_max_width: float = 0                         
 
-    # ── depth ────────────────────────────────────────────────────────────
+                                                                           
     elevation_card: float = 0
     elevation_button: float = 1.5
     elevation_fab: float = 6
@@ -73,7 +73,7 @@ class Tokens:
     elevation_sheet: float = 12
     elevation_dialog: float = 16
 
-    # ── motion ───────────────────────────────────────────────────────────
+                                                                           
     duration_fast: int = 140
     duration_normal: int = 220
     duration_slow: int = 320
@@ -84,8 +84,8 @@ class Tokens:
     state_disabled: float = 0.38
     animate_layout: bool = True
 
-    # ── type ─────────────────────────────────────────────────────────────
-    font_family: str = ""             # "" = platform default (Roboto)
+                                                                           
+    font_family: str = ""                                             
     font_scale: float = 1.0
     text_display: float = 34
     text_headline: float = 24
@@ -100,14 +100,14 @@ class Tokens:
     letter_spacing: float = 0.0
     line_height: float = 1.32
 
-    # ── behaviour ────────────────────────────────────────────────────────
-    haptics: bool = True              # tap feedback on buttons/list rows
-    overscroll_glow: bool = False     # Material 3 drops the blue glow
+                                                                           
+    haptics: bool = True                                                 
+    overscroll_glow: bool = False                                     
 
-    #: Snapshot of the shipped defaults, filled in below.
+                                                         
     _DEFAULTS: Dict[str, Any] = {}
 
-    # ── api ──────────────────────────────────────────────────────────────
+                                                                           
 
     @classmethod
     def names(cls) -> tuple:

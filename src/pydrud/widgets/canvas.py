@@ -191,12 +191,12 @@ class Canvas(Widget):
         self.style.setdefault("height", height)
         if bg:
             self.style.setdefault("bg", bg)
-        #: Optional ``on_draw(canvas, size)`` hook, re-run on every rebuild.
+                                                                            
         self.on_draw = on_draw
         if on_draw is not None and not callable(on_draw):
             raise TypeError("on_draw must be callable")
 
-    # ── primitives ───────────────────────────────────────────────────────
+                                                                           
 
     def _paint(self, paint: Optional[Paint], kwargs: dict) -> dict:
         if paint is not None:
@@ -273,7 +273,7 @@ class Canvas(Widget):
                          "fit": fit})
         return self
 
-    # ── transforms & state ───────────────────────────────────────────────
+                                                                           
 
     def save(self) -> "Canvas":
         self.ops.append({"op": "save"})
@@ -310,7 +310,7 @@ class Canvas(Widget):
         self.ops.clear()
         return self
 
-    # ── higher-level helpers ─────────────────────────────────────────────
+                                                                           
 
     def sparkline(self, values: Sequence[float], *, color: str = Colors.PRIMARY,
                   width: float = 2.0, fill: bool = False,
@@ -358,7 +358,7 @@ class Canvas(Widget):
                         color=self.bg or Colors.SURFACE, fill=True)
         return self
 
-    # ── serialisation ────────────────────────────────────────────────────
+                                                                           
 
     def _serialise_props(self) -> dict:
         if self.on_draw is not None:

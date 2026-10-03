@@ -9,7 +9,7 @@ from pydrud.widgets.layout import (
 from pydrud.widgets.basic import (
     Text, Button, FilledButton, TonalButton, OutlinedButton, TextButton,
     ElevatedButton, IconButton, TextField, SearchField, EmailField,
-    PasswordField, NumberField, PhoneField, UrlField, Image, Icon, Checkbox,
+    PasswordField, NumberField, PhoneField, UrlField, Image, SvgPicture, Icon, Checkbox,
     Switch, ProgressBar, LinearProgress, Slider, Dropdown, Radio,
 )
 from pydrud.widgets.theme import (Colors, Icons, Theme, ColorScheme, Typography,
@@ -34,8 +34,8 @@ from pydrud.widgets.forms import (
 )
 from pydrud.widgets.canvas import Canvas, Paint, Path, radial_point
 from pydrud.widgets.advanced import (
-    CameraPreview, InfiniteList, MapView, Markdown, Marker, ReorderableList,
-    RichText, Span,
+    CameraPreview, QRScanner, InfiniteList, MapView, Markdown, Marker,
+    ReorderableList, RichText, Span,
 )
 from pydrud.widgets.app_bar import AppBar
 from pydrud.widgets.scaffold import Scaffold
@@ -57,7 +57,7 @@ __all__ = [
     "Widget",
     "assign_stable_keys",
     "validate_tree_keys",
-    # layout
+            
     "Container",
     "Column",
     "Row",
@@ -71,7 +71,7 @@ __all__ = [
     "Card",
     "ListView",
     "GridView",
-    # basic
+           
     "Text",
     "Button",
     "FilledButton",
@@ -88,6 +88,7 @@ __all__ = [
     "PhoneField",
     "UrlField",
     "Image",
+    "SvgPicture",
     "Icon",
     "Checkbox",
     "Switch",
@@ -96,11 +97,11 @@ __all__ = [
     "Slider",
     "Dropdown",
     "Radio",
-    # structure
+               
     "AppBar",
     "Scaffold",
     "FloatingActionButton",
-    # styling
+             
     "Style",
     "EdgeInsets",
     "Alignment",
@@ -118,7 +119,7 @@ __all__ = [
     "Theme",
     "ColorScheme",
     "Typography",
-    # material
+              
     "ListTile",
     "ExpansionTile",
     "Chip",
@@ -148,12 +149,12 @@ __all__ = [
     "WebView",
     "VideoPlayer",
     "Chart",
-    # gestures
+              
     "GestureDetector",
     "InkWell",
     "Dismissible",
     "Draggable",
-    # animation
+               
     "Animation",
     "AnimatedContainer",
     "AnimatedOpacity",
@@ -165,7 +166,7 @@ __all__ = [
     "ScaleIn",
     "Hero",
     "animate",
-    # forms
+           
     "Form",
     "FormField",
     "required",
@@ -179,12 +180,13 @@ __all__ = [
     "pattern",
     "matches",
     "custom",
-    # v1.3 — painting, hardware, maps, rich text and big lists
+                                                              
     "Canvas",
     "Paint",
     "Path",
     "radial_point",
     "CameraPreview",
+    "QRScanner",
     "MapView",
     "Marker",
     "RichText",
@@ -192,13 +194,13 @@ __all__ = [
     "Markdown",
     "ReorderableList",
     "InfiniteList",
-    # v1.5 — responsive layout
+                              
     "ResponsiveBuilder",
     "AdaptiveLayout",
     "ResponsiveGrid",
     "ShowWhen",
     "SafeArea",
-    # Flutter-style presets and common compositions
+                                                   
     "Expanded",
     "Flexible",
     "Align",
