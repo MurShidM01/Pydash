@@ -13,7 +13,6 @@ Layout:
 * ``theme``      — the Pydash design system on top of Pydrud's Theme
 * ``components`` — reusable UI building blocks shared by screens
 * ``preview``    — the live-preview client (protocol, session, renderer)
-* ``data``       — the component catalog and playground demo registry
 * ``screens``    — one module per screen family
 * ``jobs``       — background work run by WorkManager
 * ``main``       — route registration and the start-up entry point

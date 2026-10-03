@@ -1,26 +1,25 @@
 """Reusable application UI components.
 
 The shared vocabulary of Pydash screens: section labels, page scaffolding,
-demo cards, metadata rows and monospace code chips. Screens compose these
-instead of re-inventing surfaces, which is what keeps the whole app
-visually consistent.
+metadata rows and monospace code chips. Screens compose these instead of
+re-inventing surfaces, which is what keeps the whole app visually
+consistent.
 """
 
 from __future__ import annotations
 
-from typing import Callable, Iterable, Optional, Sequence
+from typing import Optional, Sequence
 
 from pydrud import (
-    Card, Colors, Column, Container, Icon, Icons, Radius, Responsive,
-    Row, SafeArea, Spacing, Text, Theme, Widget,
+    Column, Container, Icon, Radius, Responsive, Row, Spacing, Text, Theme,
+    Widget,
 )
 from pydrud import Center
 
-from app.theme import caption_style, code_style, hairline, pad
+from app.theme import code_style, pad
 
 __all__ = [
-    "CodeChip", "DemoCard", "MetaRow", "MetaList", "page_body", "section",
-    "section_header",
+    "CodeChip", "MetaRow", "MetaList", "page_body", "section",
 ]
 
 
@@ -53,33 +52,6 @@ def EdgeInsets_section(key: str) -> dict:
                       top=Spacing.SM, bottom=Spacing.XXS).to_dict()
 
 
-def section_header(title: str, key: str, subtitle: str = "",
-                   icon: str = "") -> Widget:
-    """A section header with an icon chip — used to open showcase groups."""
-    children: list[Widget] = []
-    if icon:
-        children.append(Icon(icon, key=f"{key}_icon", size=20,
-                             color=Theme.primary))
-    children.append(Text(title, key=f"{key}_title", size=16, weight=700,
-                         color=Theme.text))
-    return Container(
-        key=key,
-        width="match",
-        padding=pad(vertical=Spacing.SM),
-        child=Column(
-            key=f"{key}_col",
-            spacing=2,
-            children=[
-                Row(key=f"{key}_row", spacing=Spacing.SM,
-                    vertical_alignment="center", children=children),
-                Text(subtitle, key=f"{key}_sub", size=13,
-                     color=Theme.text_secondary) if subtitle else
-                Container(key=f"{key}_nosub", height=0),
-            ],
-        ),
-    )
-
-
 def page_body(key: str, children: Sequence[Widget],
               *, vertical_alignment: Optional[str] = None) -> Widget:
     """A scrolling column with a readable, responsive gutter.
@@ -110,72 +82,6 @@ def _page_padding(gutter: float) -> dict:
 
     return EdgeInsets(left=gutter, right=gutter, top=Spacing.LG,
                       bottom=Spacing.HUGE).to_dict()
-
-
-def DemoCard(
-    key: str,
-    *,
-    title: str,
-    description: str = "",
-    icon: str = "",
-    badge: Optional[str] = None,
-    child: Optional[Widget] = None,
-    children: Optional[Iterable[Widget]] = None,
-    on_click: Optional[Callable] = None,
-    padded: bool = True,
-) -> Widget:
-    """A showcase card: caption row, live demo content, and a caption.
-
-    ``on_click`` turns the whole card into a tap target (used by the
-    component catalog and the playground index).
-    """
-    body: list[Widget] = []
-    if description:
-        body.append(Text(description, key=f"{key}_desc", size=13,
-                         color=Theme.text_secondary))
-    if child is not None:
-        body.append(child)
-    if children:
-        body.extend(children)
-
-    header_children: list[Widget] = []
-    if icon:
-        header_children.append(Container(
-            key=f"{key}_icon_tile",
-            width=34,
-            height=34,
-            border_radius=Radius.SM,
-            bg=Colors.with_opacity(Theme.primary, 0.12),
-            alignment="center",
-            child=Icon(icon, key=f"{key}_icon", size=18,
-                       color=Theme.primary),
-        ))
-    header_children.append(Text(title, key=f"{key}_title", size=15,
-                                weight=700, color=Theme.text, expand=1,
-                                max_lines=1, overflow="ellipsis"))
-    if badge:
-        from pydrud import Chip
-
-        header_children.append(Chip(badge, key=f"{key}_badge",
-                                    color=Colors.with_opacity(
-                                        Theme.primary, 0.10)))
-
-    inner = Column(
-        key=f"{key}_body",
-        spacing=Spacing.MD,
-        children=[
-            Row(key=f"{key}_head", spacing=Spacing.SM,
-                vertical_alignment="center",
-                children=header_children),
-            *body,
-        ],
-    )
-    return Card(
-        key=key,
-        child=inner,
-        padding=Spacing.LG if padded else 0,
-        on_click=on_click,
-    )
 
 
 def MetaRow(key: str, label: str, value: str,

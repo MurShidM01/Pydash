@@ -10,14 +10,16 @@ same versioned, authenticated preview protocol the generated Android runtime
 uses, then draws the mirrored widget tree with the real renderer, not a
 re-implementation.
 
+Pydash is a preview client and nothing else — think *Expo Go for Pydrud*.
+It ships no widget catalog or demo playground of its own; every screen
+exists to connect, show and manage a live preview session.
+
 ## What's inside
 
 | Area | What it is |
 | --- | --- |
 | **Home** | Connection dashboard: status pill, server details, live sync statistics, reconnect/disconnect controls — and always one tap to scan the `pydrud dev` QR code. |
 | **Live Preview** | The client side of `pydrud dev`: camera QR capture (ML Kit) or manual entry, a revisioned widget-tree mirror with a patch applier, and a native renderer for the remote project's UI. |
-| **Components** | A searchable catalog of every widget in the current SDK — buttons, chips, inputs, layout, lists, motion, navigation, progress, typography, visuals. Each demo builds real widgets live, nothing is a screenshot. |
-| **Playground** | Ten interactive experiences — state, theming, navigation, motion, responsive layouts, forms, background tasks, gestures, data viz and a kitchen-sink demo — for exploring Pydrud on-device. |
 | **Settings** | Theme mode (system/light/dark), brand re-seeding, haptics, keep-awake, auto-reconnect, plus protocol versions and About info. |
 
 ## Using Pydash to preview your own project
@@ -80,7 +82,7 @@ pydrud run              # build, install, launch with Flutter-style Hot Reload (
 python run.py           # headless: build the widget tree on your computer
 python run.py --tree    #   dump the full tree as JSON
 python run.py --tab     #   verify every tab body constructs
-python -m pytest tests/ # run the test suite (61 tests)
+python -m pytest tests/ # run the test suite (54 tests)
 ```
 
 `pydrud dev` and `pydrud run` are separate workflows: preview never builds
@@ -94,7 +96,6 @@ Pydash/
 ├── run.py                  dev runner (headless: tree build / JSON dump / tab check)
 ├── pydrud.yaml             SDK, NDK, package name, permissions, capabilities
 ├── pydrud.toml             Python packages bundled into the APK + theme seed
-├── assets/                 images and fonts shipped with the app
 ├── android/                the generated native layer — `pydrud sync` refreshes it
 ├── tests/                  app, mirror, URI-parser and end-to-end protocol tests
 └── src/
@@ -114,19 +115,12 @@ Pydash/
         │   ├── mirror.py   mirrored remote widget tree + patch applier
         │   ├── session.py  session state machine + auto-reconnect
         │   └── renderer.py renders the mirrored tree natively in Pydash
-        ├── data/
-        │   ├── catalog.py        the component-showcase registry
-        │   ├── showcase/         live widget demos, one module per family
-        │   ├── playground.py     the playground demo registry
-        │   └── playground_demos/ the ten playground experiences
         ├── components/     reusable UI: layout, brand hero, status pill, states
         └── screens/        one module per screen
-            ├── shell.py        tabbed root (Home · Components · Playground · Settings)
+            ├── shell.py        tabbed root (Home · Settings)
             ├── home.py         the connection dashboard
             ├── scan.py         camera QR capture + manual entry
             ├── preview.py      the live-preview host screen
-            ├── components.py   showcase index + category detail
-            ├── playground.py   playground index + demo host
             └── settings.py     appearance, connection behaviour, About
 ```
 
@@ -137,9 +131,6 @@ Pydash/
 | `shell` | Tabbed root | initial route |
 | `scan` | QR scanner + manual entry | pushed, `slide_up` |
 | `preview` | Live preview host | `fade` |
-| `category` | Component category detail | `?cat=<id>`, `slide_left` |
-| `demo` | Playground demo | `?id=<id>`, `slide_left` |
-| `playground/item` | Navigation demo's pushed screen | parameters + transitions demo |
 | `/preview/connect` | Deep link from a `pydrud dev` QR | validates and connects immediately |
 
 Deep links work with both the app's own `pydash://` scheme and the
@@ -154,15 +145,6 @@ in the manifest, so any scanner app can hand a QR payload to Pydash.
    `router.define("profile", profile_screen)`.
 3. Navigate from any handler with `router.push("profile")`, passing data as
    `router.push("profile", params={"id": 7})`.
-
-## Add a demo
-
-- **Component showcase:** add a builder to the matching module in
-  `src/app/data/showcase/` and append a `Demo(...)` to its category — the
-  catalog, search and category screens pick it up automatically.
-- **Playground:** create a module in `src/app/data/playground_demos/`
-  exposing a `DEMO = PlaygroundDemo(...)` and register it in
-  `src/app/data/playground.py`'s `DEMOS` tuple.
 
 All Pydash-owned widget keys use the `pd_` prefix so they can never collide
 with the mirrored remote tree, whose keys arrive verbatim from the dev
@@ -205,7 +187,7 @@ device:
 
 | File | What it covers |
 | --- | --- |
-| `test_app.py` | every screen, tab switching, catalog search, demo interactions and deep links via `pydrud.testing.AppTester` |
+| `test_app.py` | every screen, tab switching, connection flows and deep links via `pydrud.testing.AppTester` |
 | `test_uri.py` | QR payload parsing and validation rules |
 | `test_mirror.py` | the remote tree mirror and every patch op (`create`/`delete`/`move`/`replace`/`update`) |
 | `test_preview_protocol.py` | end-to-end wire contract — handshake, rejection codes, revisioned transactions, ACK/NACK, resync, events and service bridge — against a real `pydrud.App` served by `tests/preview_server_harness.py` |

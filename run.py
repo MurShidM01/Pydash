@@ -8,9 +8,9 @@ for checking that the widget tree builds and for unit-testing screens::
     python run.py            # headless (prints the widget tree summary)
     python run.py --tree     # dump the full widget tree as JSON
 
-The tree built here is the real shell — Home dashboard, tab bar, catalog
-and playground registries included — so a successful build means every
-screen and demo in the app is constructible against the vendored SDK.
+The tree built here is the real shell — Home dashboard and tab bar
+included — so a successful build means every screen in the app is
+constructible against the vendored SDK.
 """
 
 import os
@@ -35,11 +35,9 @@ def main() -> int:
     session_tab = "--tab" in sys.argv
     if session_tab:
         # Just verify every tab body constructs, then exit.
-        from app.screens import components, home, playground, settings
+        from app.screens import home, settings
 
         for name, builder in (("home", home.body),
-                              ("components", components.body),
-                              ("playground", playground.body),
                               ("settings", settings.body)):
             count = sum(1 for widget in builder() for _ in widget.walk())
             print(f"[Pydash]   {name:<12} {count:>4} widgets")
