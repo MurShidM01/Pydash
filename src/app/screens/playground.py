@@ -1,294 +1,168 @@
-"""The Pydrud Native Playground — one screen, every superpower.
+"""Playground index — the signature Pydash experiences."""
 
-Each card demonstrates one thing Pydrud gives you out of the box:
-
-* **Native Android** — Toast, Snackbar, dialogs, haptics, clipboard,
-  share sheet, device info and runtime permissions. One Python call each.
-* **Components**     — TextField, Switch, Checkbox, Slider and friends,
-  all rendered as real Material views.
-* **State & interaction** — a reactive counter: change a ``State`` value,
-  call ``refresh()``, and the UI follows.
-* **Navigation**     — push a second screen onto the stack; hardware back
-  (or the arrow in its app bar) pops it.
-
-Tap anything — every control answers back.
-"""
+from __future__ import annotations
 
 from pydrud import (
-    AppBar, Button, Card, Checkbox, Chip, Colors, Column, Container, Divider,
-    Elevation, Icon, Icons, ListTile, ProgressBar, Radius, ResponsiveGrid,
-    Row, Scaffold, SizedBox, Slider, Spacing, SwitchListTile, Text, TextField,
-    Theme,
+    Card, Colors, Column, Container, Divider, Icon, Icons, Radius, Row,
+    Spacing, Text, Theme, Widget,
 )
 
-from app.config import APP_NAME, APP_TAGLINE
-from app.runtime import refresh, router
-from app.state import amount, counter, dark_mode, liked, your_name
-from app.components import demo_button, page_body, section
+from app.data.playground import DEMOS
+from app.runtime import router
+
+__all__ = ["body", "demo_screen"]
 
 
-def playground_screen(page):
-    """Build the playground into *page*."""
-    page.bgcolor = Theme.background
-
-    page.add(Scaffold(
-        key="playground",
-        app_bar=AppBar(title=APP_NAME, key="playground_bar", actions=[
-            Icon(Icons.SHARE, key="bar_share", size=22,
-                 color=Theme.text_secondary).on_click(
-                lambda _e: page.share.text(
-                    f"{APP_NAME} — a native Android app written in Python "
-                    f"with Pydrud!")),
-        ]),
-        body=page_body("playground", [
-            hero(),
-            section("Native Android", "sec_native"),
-            native_card(page),
-            section("Components", "sec_components"),
-            components_card(page),
-            section("State & interaction", "sec_state"),
-            state_card(page),
-            section("Navigation", "sec_nav"),
-            navigation_card(page),
-        ]),
-    ))
+def body() -> list:
+    cards = [_demo_card(demo) for demo in DEMOS]
+    return [
+        _intro(),
+        Column(key="pd_pg_list", spacing=Spacing.SM, children=cards),
+    ]
 
 
-# ── Hero ────────────────────────────────────────────────────────────────────
-
-
-def hero():
-    """The branded header card."""
+def _intro() -> Widget:
     return Container(
-        key="hero",
+        key="pd_pg_intro",
         width="match",
         border_radius=Radius.XL,
         padding=Spacing.XL,
-        style={"gradient": {
-            "colors": [Theme.primary,
-                       Colors.mix(Theme.primary, Theme.secondary, 0.55)],
-            "direction": "diagonal",
-        }, "elevation": Elevation.CARD},
-        child=Column(key="hero_body", spacing=Spacing.XS, children=[
-            Row(key="hero_badge", spacing=Spacing.SM,
-                vertical_alignment="center", children=[
-                    Icon(Icons.ANDROID, key="hero_android", size=18,
-                         color=Colors.with_opacity(Colors.WHITE, 0.9)),
-                    Icon(Icons.PYTHON, key="hero_python", size=18,
-                         color=Colors.with_opacity(Colors.WHITE, 0.9)),
-                ]),
-            Text("Pydrud Native Playground", key="hero_title", size=24,
-                 weight=700, color=Colors.WHITE),
-            Text(APP_TAGLINE, key="hero_subtitle", size=14,
-                 color=Colors.with_opacity(Colors.WHITE, 0.88)),
-            SizedBox(height=Spacing.XS),
-            Text("Every control on this screen drives a real Android API "
-                 "from Python.", key="hero_hint", size=12,
-                 color=Colors.with_opacity(Colors.WHITE, 0.7)),
-            Row(key="hero_chips", spacing=Spacing.XS, children=[
-                Chip("100% Python UI", key="chip_python", icon=Icons.CODE,
-                     color=Colors.with_opacity(Colors.WHITE, 0.20)),
-                Chip("Hot Reload", key="chip_reload", icon=Icons.SYNC,
-                     color=Colors.with_opacity(Colors.WHITE, 0.20)),
-            ]),
-        ]),
+        style={
+            "gradient": {
+                "colors": [Colors.mix(Theme.primary, Theme.secondary, 0.0),
+                           Colors.mix(Theme.primary, Theme.secondary, 0.7)],
+                "direction": "diagonal",
+            },
+        },
+        child=Row(
+            key="pd_pg_intro_row",
+            spacing=Spacing.LG,
+            vertical_alignment="center",
+            children=[
+                Container(
+                    key="pd_pg_intro_tile",
+                    width=52,
+                    height=52,
+                    border_radius=Radius.PILL,
+                    bg=Colors.with_opacity(Colors.WHITE, 0.18),
+                    alignment="center",
+                    child=Icon(Icons.ROCKET, key="pd_pg_intro_icon",
+                               size=24, color=Colors.WHITE),
+                ),
+                Column(
+                    key="pd_pg_intro_col",
+                    spacing=2,
+                    expand=1,
+                    children=[
+                        Text("Playground", key="pd_pg_intro_title", size=20,
+                             weight=800, color=Colors.WHITE),
+                        Text("Ten interactive framework demos — state, "
+                             "theming, navigation, motion and more.",
+                             key="pd_pg_intro_sub", size=12,
+                             color=Colors.with_opacity(Colors.WHITE, 0.88)),
+                    ],
+                ),
+            ],
+        ),
     )
 
 
-# ── Native Android ──────────────────────────────────────────────────────────
-
-
-def native_card(page):
-    """Eight native services, one Python call each."""
-
-    def show_dialog(_event):
-        page.dialog.confirm(
-            "This dialog is a real Material dialog, opened from Python.",
-            title="Native dialog", ok="Love it", cancel="Close",
-        ).then(lambda yes: page.toast("Glad you like it!" if yes
-                                      else "Dialog closed"))
-
-    def buzz(_event):
-        # Use an unmistakable device-tuned effect for the demo button. Smaller
-        # selection ticks remain available for routine UI feedback.
-        page.haptics.impact("heavy") \
-            .then(lambda _ok: page.toast("Bzzt — did you feel that?")) \
-            .catch(lambda error: page.toast(
-                "Haptics need the haptics capability" if "VIBRATE" in error
-                else f"Haptics unavailable: {error}"))
-
-    def copy_text(_event):
-        page.clipboard.copy(f"{APP_NAME} — built with Pydrud")
-        page.toast("Copied to the clipboard")
-
-    def show_device(_event):
-        def tell(info):
-            info = info or {}
-            page.dialog.alert(
-                f"{info.get('manufacturer', 'Unknown')} "
-                f"{info.get('model', 'device')} — "
-                f"Android SDK {info.get('sdk', '?')}",
-                title="This device")
-        page.device.info().then(tell)
-
-    def ask_permission(_event):
-        def report(result):
-            granted = (all(result.values())
-                       if isinstance(result, dict) and result
-                       else bool(result))
-            page.toast("Permission granted" if granted
-                       else "Permission denied")
-        page.permissions.request("notifications") \
-            .then(report) \
-            .catch(lambda error: page.toast(
-                "Permission not declared — run pydrud capabilities add notifications"
-                if "not declared" in error else f"Permission error: {error}"))
-
-    return Card(key="native_card", padding=Spacing.LG, child=Column(
-        key="native_body", spacing=Spacing.MD, children=[
-            Text("Real Android services — no Java required.",
-                 key="native_hint", size=13, color=Theme.text_secondary),
-            ResponsiveGrid(key="native_grid", min_item_width=150,
-                           max_columns=4, spacing=Spacing.SM, children=[
-                demo_button("Toast", Icons.CHAT, "toast_btn",
-                            lambda _e: page.toast("Hello from Python!")),
-                demo_button("Snackbar", Icons.INFO, "snack_btn",
-                            lambda _e: page.snack_bar(
-                                "A native snackbar", action="Nice",
-                                on_action=lambda: page.toast("Right?"))),
-                demo_button("Dialog", Icons.HELP, "dialog_btn", show_dialog),
-                demo_button("Vibrate", Icons.SPARKLE, "vibrate_btn", buzz),
-                demo_button("Clipboard", Icons.COPY, "copy_btn", copy_text),
-                demo_button("Share", Icons.SHARE, "share_btn",
-                            lambda _e: page.share.text(
-                                f"{APP_NAME} — native Android, "
-                                f"powered by Python")),
-                demo_button("Device info", Icons.ANDROID, "device_btn",
-                            show_device),
-                demo_button("Permission", Icons.SHIELD, "perm_btn",
-                            ask_permission),
-            ]),
-        ]),
+def _demo_card(demo) -> Widget:
+    return Card(
+        key=demo.key,
+        padding=Spacing.LG,
+        on_click=lambda _e, d=demo: router.push("demo", id=d.id),
+        child=Row(
+            key=f"{demo.key}_row",
+            spacing=Spacing.MD,
+            vertical_alignment="center",
+            children=[
+                Container(
+                    key=f"{demo.key}_icon_tile",
+                    width=44,
+                    height=44,
+                    border_radius=Radius.MD,
+                    bg=Colors.with_opacity(Theme.primary, 0.12),
+                    alignment="center",
+                    child=Icon(demo.icon, key=f"{demo.key}_icon", size=21,
+                               color=Theme.primary),
+                ),
+                Column(
+                    key=f"{demo.key}_col",
+                    spacing=2,
+                    expand=1,
+                    children=[
+                        Text(demo.title, key=f"{demo.key}_t", size=15,
+                             weight=700, color=Theme.text),
+                        Text(demo.blurb, key=f"{demo.key}_b", size=12,
+                             color=Theme.text_secondary),
+                    ],
+                ),
+                Icon(Icons.CHEVRON_RIGHT, key=f"{demo.key}_chevron",
+                     size=18, color=Theme.text_secondary),
+            ],
+        ),
     )
 
 
-# ── Components ──────────────────────────────────────────────────────────────
+# ── demo detail screen ─────────────────────────────────────────────────────
+
+def demo_screen(page, params=None) -> None:
+    """One playground demo, full screen."""
+    params = dict(params or {})
+    demo = next((d for d in DEMOS if d.id == str(params.get("id", ""))),
+                None)
+    page.bgcolor = Theme.background
+    from app.components import page_body
+
+    if demo is None:
+        page.add(page_body("pd_demo_missing", [
+            Column(key="pd_demo_missing_col", spacing=Spacing.SM, children=[
+                Text("Demo not found", key="pd_demo_missing_t", size=16,
+                     weight=700, color=Theme.text),
+                Text("It may have been renamed.",
+                     key="pd_demo_missing_s", size=13,
+                     color=Theme.text_secondary),
+            ]),
+        ]))
+        return
+
+    page.add(page_body(
+        f"pd_demo_{demo.id}",
+        [
+            _demo_header(demo),
+            demo.build(f"pd_demo_{demo.id}_body")
+            if demo.build else Container(key="pd_demo_nob", height=0),
+        ],
+    ))
 
 
-def components_card(page):
-    """Interactive Material widgets bound to shared state."""
-
-    def set_name(event):
-        your_name.value = event.get("value", "")
-        refresh()
-
-    def toggle_dark(event):
-        dark_mode.value = bool(event.get("value"))
-        # One call re-themes Python widgets *and* the native layer
-        # (ripples, inputs, dialogs, system bars).
-        page.set_theme_mode("dark" if dark_mode.value else "light")
-        refresh()
-
-    def set_liked(event):
-        liked.value = bool(event.get("value"))
-        refresh()
-
-    def set_amount(event):
-        amount.value = float(event.get("value", 0))
-        refresh()
-
-    greeting = (f"Hello, {your_name.value.strip()}!"
-                if your_name.value.strip() else "Type your name above…")
-
-    return Card(key="components_card", padding=Spacing.LG, child=Column(
-        key="components_body", spacing=Spacing.MD, children=[
-            TextField(your_name.value, key="name_input",
-                      hint="What's your name?", icon=Icons.PERSON)
-            .on_change(set_name),
-            Text(greeting, key="greeting", size=15, weight=600,
-                 color=Theme.primary if your_name.value.strip()
-                 else Theme.text_secondary),
-            Divider(key="components_div1"),
-            SwitchListTile(
-                "Dark mode", key="dark_mode_tile", control_key="dark_switch",
-                value=dark_mode.value, on_change=toggle_dark,
+def _demo_header(demo) -> Widget:
+    return Row(
+        key=f"{demo.key}_header",
+        spacing=Spacing.MD,
+        vertical_alignment="center",
+        children=[
+            Container(
+                key=f"{demo.key}_header_tile",
+                width=40,
+                height=40,
+                border_radius=Radius.MD,
+                bg=Colors.with_opacity(Theme.primary, 0.12),
+                alignment="center",
+                child=Icon(demo.icon, key=f"{demo.key}_header_icon",
+                           size=19, color=Theme.primary),
             ),
-            Checkbox("I'm enjoying this playground", key="like_box",
-                     checked=liked.value).on_change(set_liked),
-            Divider(key="components_div2"),
-            Row(key="amount_head", vertical_alignment="center", children=[
-                Text("Slider", key="amount_title", size=15, weight=500,
-                     color=Theme.text),
-                Container(key="amount_gap", expand=1),
-                Text(f"{int(amount.value)}%", key="amount_label", size=14,
-                     weight=600, color=Theme.primary),
-            ]),
-            Slider(amount.value, key="amount_slider", min=0, max=100)
-            .on_change(set_amount),
-            ProgressBar(amount.value / 100, key="amount_progress"),
-        ]),
-    )
-
-
-# ── State & interaction ─────────────────────────────────────────────────────
-
-
-def state_card(page):
-    """A reactive counter: State in, refresh() out."""
-
-    def add(step):
-        def handler(_event):
-            counter.value += step
-            page.haptics.selection()
-            refresh()
-        return handler
-
-    def reset(_event):
-        previous = counter.value
-        counter.value = 0
-
-        def undo():
-            counter.value = previous
-            refresh()
-
-        page.snack_bar("Counter reset", action="Undo", on_action=undo)
-        refresh()
-
-    return Card(key="state_card", padding=Spacing.LG, child=Column(
-        key="state_body", spacing=Spacing.SM,
-        horizontal_alignment="center", children=[
-            Text("COUNTER", key="counter_caption", size=11, weight=700,
-                 color=Theme.text_secondary,
-                 style={"font": {"letterSpacing": 0.12}}),
-            Text(str(counter.value), key="counter_value", size=44,
-                 weight=700, color=Theme.text),
-            Row(key="counter_actions", spacing=Spacing.SM,
-                horizontal_alignment="center",
-                vertical_alignment="center", children=[
-                    Button("−1", key="dec_btn", icon=Icons.REMOVE,
-                           variant="tonal", size="md").on_click(add(-1)),
-                    Button("+1", key="inc_btn", icon=Icons.ADD,
-                           size="md").on_click(add(+1)),
-                    Button("Reset", key="reset_btn", icon=Icons.REFRESH,
-                           variant="outlined", size="md").on_click(reset),
-                ]),
-            Text("State lives in app/state.py and survives navigation "
-                 "and hot reload.", key="state_hint", size=12,
-                 color=Theme.text_secondary, text_align="center"),
-        ]),
-    )
-
-
-# ── Navigation ──────────────────────────────────────────────────────────────
-
-
-def navigation_card(page):
-    """Push a second screen; back (hardware or app bar) pops it."""
-    return Card(key="nav_card", padding=0, child=Column(
-        key="nav_body", children=[
-            ListTile("Open the details screen", key="open_details",
-                     subtitle="router.push('details') — back pops it",
-                     leading=Icons.ROCKET, trailing=Icons.CHEVRON_RIGHT,
-                     on_click=lambda _e: router.push("details")),
-        ]),
+            Column(
+                key=f"{demo.key}_header_col",
+                spacing=2,
+                expand=1,
+                children=[
+                    Text(demo.title, key=f"{demo.key}_header_t", size=17,
+                         weight=800, color=Theme.text),
+                    Text(demo.blurb, key=f"{demo.key}_header_b", size=12,
+                         color=Theme.text_secondary),
+                ],
+            ),
+        ],
     )
