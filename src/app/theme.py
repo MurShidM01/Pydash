@@ -12,7 +12,7 @@ declarative and testable.
 
 from __future__ import annotations
 
-from pydrud import Colors, EdgeInsets, Theme, Tokens
+from pydrud import Border, Colors, EdgeInsets, Theme, Tokens
 
 from app.config import ACCENT, ACCENT_ALT
 
@@ -171,12 +171,13 @@ def seed_brand() -> None:
 def configure_pydash_tokens() -> None:
     """Nudge the shared design tokens towards Pydash's look.
 
-    Slightly rounder cards and a shorter app bar keep the tool feeling
-    compact and technical without inventing a parallel design language.
+    Slightly rounder cards and a compact app bar keep the tool feeling
+    tight and technical — a preview client should hand the screen to the
+    project, not spend it on chrome.
     """
     Tokens.update(
         radius_card=18,
-        app_bar_height=58,
+        app_bar_height=44,
     )
 
 

@@ -5,11 +5,9 @@ The route map:
 ============  ============================================  ===========================
 Route         Screen                                        Notes
 ============  ============================================  ===========================
-``shell``     Tabbed root (Home · Components · Playground)  Settings is the 4th tab
+``shell``     Tabbed root (Home · Settings)
 ``scan``      QR scanner + manual entry                     pushed over the shell
 ``preview``   Live preview host                             the remote project renders
-``category``  Component category detail                     ``?cat=<id>``
-``demo``      Playground demo                               ``?id=<id>``
 ============  ============================================  ===========================
 
 Deep links work with both the app's own ``pydash://`` scheme and the
@@ -22,10 +20,10 @@ from __future__ import annotations
 
 from pydrud import App, Column, Theme
 
-from app.config import ACCENT, APP_NAME
+from app.config import APP_NAME
 from app.preview.renderer import handle_metrics
 from app.runtime import bind, refresh, router
-from app.screens import components, playground, scan, shell
+from app.screens import scan, shell
 from app.screens.preview import preview_screen
 from app.theme import configure_pydash_tokens, seed_brand
 
@@ -38,14 +36,6 @@ def _register_routes() -> None:
     router.define("shell", shell.shell_screen)
     router.define("scan", scan.scan_screen, transition="slide_up")
     router.define("preview", preview_screen, transition="fade")
-    router.define("category", components.category_screen,
-                  transition="slide_left")
-    router.define("demo", playground.demo_screen, transition="slide_left")
-
-    # The playground's pushed item screen (parameters + transitions demo).
-    from app.data.playground_demos.navigation import item_screen
-
-    router.define("playground/item", item_screen, transition="slide_left")
 
     # Deep link from the `pydrud dev` QR code:
     #   pydrud://preview/connect?host=…&port=…&session=…&token=…

@@ -14,8 +14,7 @@ from __future__ import annotations
 from pydrud import State
 
 #: ── Shell ───────────────────────────────────────────────────────────────────
-#: Which of the four main destinations is showing (0=Home, 1=Components,
-#: 2=Playground, 3=Settings).
+#: Which of the two main destinations is showing (0=Home, 1=Settings).
 active_tab = State(0, name="active_tab")
 
 #: Preferred appearance: "system" | "light" | "dark".
@@ -41,12 +40,6 @@ last_endpoint = State(None, name="last_endpoint")
 #: screens can simply read it during rebuilds.
 session_pulse = State(0, name="session_pulse")
 
-#: Component showcase: active search filter ("" shows everything).
-catalog_query = State("", name="catalog_query")
-
-#: Component showcase: chips the user toggled on.
-catalog_filters = State((), name="catalog_filters")
-
 
 def bump(*_args) -> None:
     """Nudge :data:`session_pulse` so open screens re-read session state."""
@@ -54,7 +47,6 @@ def bump(*_args) -> None:
 
 
 __all__ = [
-    "active_tab", "auto_reconnect", "brand_seed", "bump", "catalog_filters",
-    "catalog_query", "haptics_enabled", "keep_awake", "last_endpoint",
-    "session_pulse", "theme_mode",
+    "active_tab", "auto_reconnect", "brand_seed", "bump", "haptics_enabled",
+    "keep_awake", "last_endpoint", "session_pulse", "theme_mode",
 ]
