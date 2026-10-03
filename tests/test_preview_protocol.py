@@ -98,7 +98,10 @@ class PreviewProtocolCase(unittest.TestCase):
         return Endpoint(**fields)
 
     def _note_transaction(self, kind, ops):
-        self.transactions.append((kind, ops))
+        # Runs on the client's reader thread immediately after apply(), and
+        # only that thread ever applies transactions — so tree.revision here
+        # is exactly the revision of the transaction just applied.
+        self.transactions.append((kind, ops, self.tree.revision))
 
     # ── helpers ───────────────────────────────────────────────────────────
 
@@ -163,9 +166,21 @@ class TestHandshake(PreviewProtocolCase):
 class TestTransactions(PreviewProtocolCase):
     def test_snapshot_arrives_and_is_acked(self):
         self.client.connect(metrics=METRICS)
-        self.assertTrue(self.wait_for(lambda: not self.tree.is_empty),
+        self.assertTrue(self.wait_for(lambda: bool(self.transactions)),
                         "no snapshot arrived")
-        self.assertEqual(self.tree.revision, 1)
+        # A fresh session starts with a full snapshot at revision 1. Assert
+        # on the *first applied transaction* rather than the mirror's live
+        # revision: our `ready` event legitimately makes the server re-render
+        # (see test_stale_mirror_triggers_snapshot_resync), so by the time
+        # this thread reads tree.revision a second snapshot may already have
+        # been applied on the reader thread. Whether that has happened yet is
+        # pure scheduling luck (and on Windows' coarse sleep granularity it
+        # reliably has), so the old `self.assertEqual(self.tree.revision, 1)`
+        # was inherently flaky.
+        kind, _ops, revision = self.transactions[0]
+        self.assertEqual(kind, "snapshot")
+        self.assertEqual(revision, 1)
+        self.assertFalse(self.tree.is_empty)
         self.assertEqual(self.find("count_text")["props"]["value"],
                          "Count: 0")
         # The server advances its confirmed revision only on our ACK.
@@ -181,7 +196,8 @@ class TestTransactions(PreviewProtocolCase):
             lambda: self.find("count_text")["props"]["value"] == "Count: 1"),
             "patched text never arrived")
         self.assertGreaterEqual(self.tree.revision, 2)
-        self.assertTrue(any(kind == "patch" for kind, _ in self.transactions))
+        self.assertTrue(any(kind == "patch"
+                            for kind, _ops, _rev in self.transactions))
         self.client.disconnect()
 
     def test_stale_mirror_triggers_snapshot_resync(self):
