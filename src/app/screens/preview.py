@@ -1,13 +1,15 @@
 """Preview — the live project host screen.
 
-When a session is live this screen *is* the previewed app: the mirrored
-tree renders natively below a slim client header (back, project name,
-revision, disconnect). Connecting, reconnecting and failure states get
-their own quiet surfaces so the screen always explains itself.
+Once the first snapshot arrives this screen *is* the previewed app: the
+mirrored tree takes over the whole display — its own AppBar, bottom
+navigation, drawers and FABs render exactly as a standalone build would,
+and every touch, tab switch and keystroke is forwarded to the dev server.
+There is no Pydash chrome at all in that state; the system back gesture
+leaves through the project itself.
 
-Hardware back is offered to the previewed project first — see
-:meth:`app.runtime.PydashRouter.handle_back` — so the project's own
-navigation feels real; only when it declines does the user leave.
+Before that (connecting, waiting for the snapshot) and after trouble
+(failed, idle), a slim client header plus quiet status surfaces explain
+what is happening and offer Retry / Scan actions.
 """
 
 from __future__ import annotations
@@ -54,6 +56,14 @@ def preview_screen(page) -> None:
 
 def _content(page) -> Widget:
     live = session.is_live or session.is_busy
+    if live and not session.tree.is_empty:
+        # Immersive mode: the previewed project owns the entire screen.
+        # Its own Scaffold, AppBar, bottom navigation, FABs — everything —
+        # renders exactly as a standalone build would, and every touch,
+        # swipe, tab switch and keystroke is forwarded to the dev server.
+        # Pydash's chrome steps aside completely; the system back gesture
+        # leaves through the project itself (see ``handle_back``).
+        return build_preview_body()
     return Column(
         key="pd_preview_col",
         expand=1,

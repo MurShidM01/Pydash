@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
@@ -283,6 +284,75 @@ class TestPageCommands(PreviewProtocolCase):
         theme = [c for c in self.commands if c.get("cmd") == "theme"][-1]
         self.assertIn("primary", theme)
         self.client.disconnect()
+
+
+class TestPreviewSession(PreviewProtocolCase):
+    """The full session stack — :class:`PreviewSession` over the client.
+
+    Regression test for the crash where ``PreviewSession`` handed the
+    client an ``on_command`` callback it never defined: every connect
+    attempt died with ``'PreviewSession' object has no
+    '_on_remote_command'`` and the preview screen showed "Preview
+    unavailable".
+    """
+
+    def tearDown(self):
+        # Drop the session before the harness server and its App stop.
+        pysession = getattr(self, "pysession", None)
+        if pysession is not None:
+            try:
+                pysession.disconnect("test teardown")
+            except Exception:
+                pass
+        super().tearDown()
+
+    def test_session_connects_and_routes_page_commands(self):
+        from app.preview import renderer
+        from app.preview.models import ConnectionState
+        from app.preview.session import PreviewSession
+
+        # In production, page commands go to *Pydash's* page (the native
+        # bridge). In this test the only App in process is the previewed
+        # one, and forwarding its theme push back to itself would loop the
+        # socket — so neutralise the page and just watch the routing.
+        routed: list = []
+        real_handler = renderer.handle_remote_command
+
+        def spy(message):
+            routed.append(dict(message))
+            real_handler(message)
+
+        with mock.patch.object(renderer, "handle_remote_command", spy), \
+                mock.patch.object(renderer, "_page", return_value=None):
+            self.pysession = PreviewSession()
+            self.pysession.connect(self.endpoint())
+
+            self.assertTrue(self.wait_for(
+                lambda: self.pysession.state == ConnectionState.CONNECTED),
+                f"session never connected: "
+                f"{self.pysession.describe_error()!r}")
+            self.assertIsNone(self.pysession.error)
+            self.assertEqual(self.pysession.project_name, "Counter Project")
+
+            # The first snapshot lands in the mirror…
+            self.assertTrue(self.wait_for(
+                lambda: not self.pysession.tree.is_empty))
+
+            # …and the server's theme push reaches the renderer layer —
+            # this is the callback that used to be missing.
+            self.assertTrue(self.wait_for(
+                lambda: any(m.get("cmd") == "theme" for m in routed)),
+                "page commands never reached the renderer")
+
+    def test_session_reports_handshake_rejection(self):
+        from app.preview.models import ConnectionState
+        from app.preview.session import PreviewSession
+
+        self.pysession = PreviewSession()
+        self.pysession.connect(self.endpoint(token="wrong-token"))
+        self.assertTrue(self.wait_for(
+            lambda: self.pysession.state == ConnectionState.FAILED))
+        self.assertEqual(self.pysession.error_code, "authentication_failed")
 
 
 if __name__ == "__main__":
