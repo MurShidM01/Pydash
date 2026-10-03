@@ -206,6 +206,18 @@ class PreviewSession:
         # Reserved for future client-side reactions to remote events.
         pass
 
+    def _on_remote_command(self, message: dict) -> None:
+        """Handle one page command from the development server.
+
+        Called on the client's reader thread for everything that is not a
+        render transaction: theme pushes, toasts, snackbars, dialogs,
+        native service calls, back results… The renderer layer owns the
+        semantics; it is imported lazily because it already imports this
+        module (for the :data:`session` singleton) at module level.
+        """
+        from app.preview.renderer import handle_remote_command
+        handle_remote_command(message)
+
     def _on_link_lost(self, reason: Optional[str]) -> None:
         if self._closing:
             return

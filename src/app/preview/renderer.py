@@ -19,6 +19,7 @@ The renderer is the client half of the display pipeline:
 
 from __future__ import annotations
 
+import time
 from typing import Any, Optional
 
 from pydrud import (
@@ -170,8 +171,10 @@ def preview_header() -> Widget:
 
 def exit_preview() -> None:
     """Leave the preview screen; drop the session on the way out."""
+    global _back_offered_at
     from app.state import active_tab
 
+    _back_offered_at = None
     if session.is_live or session.is_busy:
         session.disconnect(reason="closed from the preview screen")
     _restore_pydash_look()
@@ -205,10 +208,33 @@ def forward_event(kind: str, event: Any) -> None:
     client.send_event(str(kind), str(getattr(event, "key", "")), data)
 
 
+#: How long a back offer may stay unanswered before the next press exits.
+_BACK_ANSWER_WINDOW = 1.5
+
+#: When the current back offer was sent (``time.time()``), if unanswered.
+_back_offered_at: Optional[float] = None
+
+
 def handle_back() -> None:
-    """Offer a hardware back press to the previewed project first."""
+    """Offer a hardware back press to the previewed project first.
+
+    The project answers asynchronously with a ``back_result`` command:
+    handled (it popped its own navigation stack) or not handled (Pydash
+    leaves the preview). If the answer never comes — the dev server sits
+    on a breakpoint, a handler hangs — the user must still be able to
+    leave the immersive preview, so a second press after
+    :data:`_BACK_ANSWER_WINDOW` seconds exits outright.
+    """
+    global _back_offered_at
     client = session.client
     if client is not None and client.is_connected:
+        now = time.time()
+        if (_back_offered_at is not None
+                and now - _back_offered_at > _BACK_ANSWER_WINDOW):
+            _back_offered_at = None
+            exit_preview()
+            return
+        _back_offered_at = now
         client.send_back()
     else:
         exit_preview()
@@ -261,6 +287,7 @@ def handle_remote_command(message: dict) -> None:
 
 
 def _dispatch_page_command(cmd: str, message: dict) -> None:
+    global _back_offered_at
     page = _page()
     if page is None:
         return
@@ -296,6 +323,8 @@ def _dispatch_page_command(cmd: str, message: dict) -> None:
         return
 
     if cmd == "back_result":
+        global _back_offered_at
+        _back_offered_at = None
         if not message.get("handled"):
             # The project has nothing to pop — leave the preview.
             exit_preview()

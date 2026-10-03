@@ -5,8 +5,10 @@ against a fake device, so these run anywhere — no emulator, no Gradle.
 Run them with ``pydrud test`` or ``pytest``.
 """
 
+import copy
 import os
 import sys
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(
@@ -21,11 +23,25 @@ from app.preview.session import session  # noqa: E402
 from app.runtime import refresh, router  # noqa: E402
 from app.state import active_tab  # noqa: E402
 
+#: A miniature remote project: its own Scaffold with a text on it, as
+#: ``pydrud dev`` would serialise it.
+REMOTE_SNAPSHOT = {
+    "type": "Scaffold",
+    "key": "remote_root",
+    "style": {"width": "match", "height": "match"},
+    "props": {},
+    "children": [
+        {"type": "Text", "key": "remote_greeting", "style": {},
+         "props": {"value": "Hello from dev"}, "children": []},
+    ],
+}
+
 
 class TestApp(unittest.TestCase):
     def setUp(self):
         active_tab.value = 0
         session.state = ConnectionState.IDLE
+        session.tree.reset()
         self.app = AppTester(app=create_app()).start()
 
     def tearDown(self):
@@ -126,6 +142,77 @@ class TestApp(unittest.TestCase):
     def test_preview_screen_explains_idle_state(self):
         router.push("preview")
         self.assertTrue(self.app.shows("No live session"))
+        self.assertIsNotNone(self.app.node("pd_preview_bar"))
+
+    def test_preview_is_immersive_once_the_snapshot_arrives(self):
+        session.tree.apply(revision=1, base_revision=0, kind="snapshot",
+                           payload={"tree": copy.deepcopy(REMOTE_SNAPSHOT)})
+        session.state = ConnectionState.CONNECTED
+        try:
+            router.push("preview")
+            self.assertTrue(self.app.shows("Hello from dev"))
+            # The remote project renders…
+            self.assertIsNotNone(self.app.node("pd_preview_host"))
+            self.assertIsNotNone(self.app.node("remote_root"))
+            # …and owns the whole screen: none of Pydash's own chrome
+            # (top bar, footer) is showing while it does.
+            self.assertIsNone(self.app.node("pd_preview_bar"))
+            self.assertIsNone(self.app.node("pd_preview_bar_row"))
+            self.assertIsNone(self.app.node("pd_preview_footer"))
+        finally:
+            session.tree.reset()
+            session.state = ConnectionState.IDLE
+            router.reset("shell")
+            refresh()
+
+    def test_preview_keeps_chrome_while_waiting_for_first_snapshot(self):
+        session.state = ConnectionState.CONNECTED
+        try:
+            router.push("preview")
+            self.assertTrue(self.app.device.wait_for(
+                lambda d: d.root is not None
+                and d.root.find("pd_preview_bar") is not None))
+            self.assertIsNotNone(self.app.node("pd_preview_bar"))
+            self.assertIsNone(self.app.node("pd_preview_host"))
+        finally:
+            session.state = ConnectionState.IDLE
+            router.reset("shell")
+            refresh()
+
+    def test_second_back_press_exits_when_project_never_answers(self):
+        from app.preview import renderer
+
+        session.tree.apply(revision=1, base_revision=0, kind="snapshot",
+                           payload={"tree": copy.deepcopy(REMOTE_SNAPSHOT)})
+        session.state = ConnectionState.CONNECTED
+
+        class StubClient:
+            is_connected = True
+
+            def send_back(self):
+                return True
+
+            def disconnect(self, reason=None):
+                pass
+
+        session.client = StubClient()
+        try:
+            router.push("preview")
+            self.assertTrue(self.app.device.wait_for(
+                lambda d: d.root is not None
+                and d.root.find("pd_preview_host") is not None))
+            # A back offer sent long ago that the project never answered
+            # (paused debugger, hung handler) must not trap the user.
+            renderer._back_offered_at = time.time() - 5
+            renderer.handle_back()
+            self.assertEqual(router.current_route, "shell")
+        finally:
+            session.client = None
+            renderer._back_offered_at = None
+            session.tree.reset()
+            session.state = ConnectionState.IDLE
+            router.reset("shell")
+            refresh()
 
     def test_settings_screen_lists_protocol_info(self):
         self.app.toggle("pd_shell_nav", 1)
