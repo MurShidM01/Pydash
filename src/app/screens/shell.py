@@ -13,12 +13,12 @@ Home dashboard (and whatever project it is previewing) owns the screen.
 from __future__ import annotations
 
 from pydrud import (
-    AppBar, BottomNavigationBar, EdgeInsets, NavItem, Row, Scaffold,
-    Spacer, Spacing, Text, Theme, Widget,
+    AppBar, BottomNavigationBar, Colors, Container, EdgeInsets, NavItem,
+    Radius, Row, Scaffold, Spacer, Spacing, Text, Theme, Widget,
 )
 
 from app.components.identity import Wordmark
-from app.components.status import StatusPill
+from app.preview.models import ConnectionState
 from app.preview.session import session
 from app.runtime import refresh, router
 from app.state import active_tab
@@ -76,14 +76,10 @@ def _select_tab(event) -> None:
 
 
 def _app_bar() -> AppBar:
-    """A compact, single-line header: wordmark, tagline, status pill.
+    """A standard compact header: wordmark, tagline, and connection status dot."""
+    is_connected = session.is_live or session.state == ConnectionState.CONNECTED
+    dot_color = Colors.SUCCESS if is_connected else Colors.ERROR
 
-    The pill rides inside the title row rather than an ``actions`` slot —
-    a 48dp circular action target would inflate the bar's height — and
-    the slim vertical padding keeps the whole bar on one comfortable
-    line instead of a tall block.
-    """
-    state = session.state
     return AppBar(
         title=Row(
             key="pd_shell_title",
@@ -95,12 +91,22 @@ def _app_bar() -> AppBar:
                 Text("· Live preview", key="pd_shell_subtitle", size=12,
                      color=Theme.text_secondary),
                 Spacer(key="pd_shell_gap"),
-                StatusPill("pd_shell_status", state).on_click(
-                    _open_connection),
+                Container(
+                    key="pd_shell_status",
+                    padding=EdgeInsets.all(8),
+                    alignment="center",
+                    child=Container(
+                        key="pd_shell_status_dot",
+                        width=10,
+                        height=10,
+                        border_radius=Radius.PILL,
+                        bg=dot_color,
+                    ),
+                ).on_click(_open_connection),
             ],
         ),
         key="pd_shell_bar",
-        padding=EdgeInsets(left=16, top=2, right=12, bottom=2),
+        padding=EdgeInsets(left=16, top=8, right=16, bottom=8),
     )
 
 

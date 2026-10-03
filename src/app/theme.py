@@ -171,13 +171,13 @@ def seed_brand() -> None:
 def configure_pydash_tokens() -> None:
     """Nudge the shared design tokens towards Pydash's look.
 
-    Slightly rounder cards and a compact app bar keep the tool feeling
+    Slightly rounder cards and a standard compact app bar keep the tool feeling
     tight and technical — a preview client should hand the screen to the
     project, not spend it on chrome.
     """
     Tokens.update(
         radius_card=18,
-        app_bar_height=44,
+        app_bar_height=56,
     )
 
 
