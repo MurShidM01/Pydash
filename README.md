@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/github/v/release/MurShidM01/Pydash?style=flat-square&color=6366F1" alt="Release" />
   <img src="https://img.shields.io/badge/platform-Android-3DDC84?style=flat-square" alt="Platform" />
-  <img src="https://img.shields.io/badge/pydrud-2.1.1-6366F1?style=flat-square" alt="Pydrud 2.1.1" />
+  <img src="https://img.shields.io/badge/pydrud-2.1.4-6366F1?style=flat-square" alt="Pydrud 2.1.4" />
   <img src="https://img.shields.io/github/license/MurShidM01/Pydash?style=flat-square" alt="License" />
 </p>
 
@@ -13,7 +13,14 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="Pydash — Home screen" width="330" />
+  <img src="docs/screenshots/home.png" alt="Pydash — Home" width="200" />
+  <img src="docs/screenshots/scan.png" alt="Pydash — Scan a QR code" width="200" />
+  <img src="docs/screenshots/preview.png" alt="Pydash — Live preview" width="200" />
+  <img src="docs/screenshots/settings.png" alt="Pydash — Settings" width="200" />
+</p>
+
+<p align="center">
+  <sub><b>Home</b> &nbsp;·&nbsp; <b>Scan</b> &nbsp;·&nbsp; <b>Live preview</b> &nbsp;·&nbsp; <b>Settings</b></sub>
 </p>
 
 ---
@@ -44,8 +51,20 @@ previews are not.
 
 ## Download
 
-Grab the latest APK from the [**Releases**](https://github.com/MurShidM01/Pydash/releases)
+Grab an APK from the [**Releases**](https://github.com/MurShidM01/Pydash/releases)
 page and install it on any device running **Android 7.0 (API 24)** or newer.
+Pydash ships **one APK per CPU architecture** — pick the smallest that matches
+your device, or take the universal build if you are unsure.
+
+| APK | Architecture | Use it for |
+| --- | --- | --- |
+| `pydash-1.0.2-universal.apk` | all | Any device — works everywhere (largest). |
+| `pydash-1.0.2-arm64-v8a.apk` | 64-bit ARM | Almost every phone and tablet since ~2016. |
+| `pydash-1.0.2-armeabi-v7a.apk` | 32-bit ARM | Older / budget devices. |
+| `pydash-1.0.2-x86_64.apk` | 64-bit x86 | Emulators and x86 tablets. |
+
+The per-architecture APKs are roughly half the size of the universal one
+because each carries only its own architecture's native libraries.
 
 ## What it does
 
@@ -101,9 +120,12 @@ To build and install the Android client:
 ```bash
 pydrud init android --backend chaquopy   # generate the Android target (once)
 pydrud sync                              # refresh generated files
-pydrud build --release                   # assemble a release APK
+pydrud build --release                   # assemble release APKs
 pydrud run                               # build, install, launch and hot-reload
 ```
+
+`pydrud.yaml` sets `abi_splits: true`, so `pydrud build --release` emits one
+APK per ABI plus a universal APK (the four files offered on the Releases page).
 
 Then, in any Pydrud project:
 
