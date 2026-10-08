@@ -1,9 +1,10 @@
-"""Tests for the mirrored remote tree and patch applier.
+"""The mirrored remote tree and its patch applier.
 
-The mirror must reproduce, for JSON trees, the semantics the Android
-``ViewFactory.applyPatch`` implements for native views — including the
-stale-base guard that drives resynchronisation. The property test below
-drives it with patches produced by Pydrud's *real* diff engine.
+These tests pin the two properties the whole preview rests on: patches are
+applied with exactly the host's semantics (and rejected when stale), and a
+:class:`~app.preview.mirror.MirrorWidget` serialises back to the *same* JSON
+the server sent — which is what makes the local diff engine emit the same
+patches a full APK build would have.
 """
 
 import os
@@ -13,286 +14,231 @@ import unittest
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from pydrud import Button, Column, Text  # noqa: E402
-from pydrud.core.diff import TreeDiff  # noqa: E402
-from pydrud.core.protocol import RenderTransaction  # noqa: E402
-
 from app.preview.mirror import (  # noqa: E402
-    MirrorApplyError, MirrorWidget, RemoteTree,
+    MirrorApplyError,
+    MirrorWidget,
+    RemoteTree,
+    mirror_key,
+    remote_key,
 )
 
 
-def node(kind: str, key: str, *, props=None, style=None, children=None,
-         events=None) -> dict:
+def _node(key, value="", type_="Text", children=None):
     return {
-        "type": kind, "key": key, "style": style or {},
-        "expand": None, "visible": True, "tooltip": None,
-        "has_events": bool(events), "events": list(events or []),
-        "props": props or {}, "children": children or [],
+        "type": type_,
+        "key": key,
+        "style": {},
+        "props": {"value": value},
+        "children": children or [],
     }
 
 
-def sample_tree() -> dict:
-    return node("Stack", "_page", children=[
-        node("Column", "body", children=[
-            node("Text", "title", props={"value": "Hello"}),
-            node("Button", "btn", props={"text": "Go"}, events=["click"]),
-        ]),
-    ])
+def _root():
+    return {
+        "type": "Column",
+        "key": "root",
+        "style": {"padding": {"left": 4}},
+        "props": {},
+        "children": [_node("a", "A"), _node("b", "B")],
+    }
+
+
+def _snapshot(tree, revision=1):
+    return dict(revision=revision, base_revision=0, kind="snapshot",
+                payload={"tree": tree})
+
+
+def _patch(revision, base_revision, *ops):
+    return dict(revision=revision, base_revision=base_revision, kind="patch",
+                payload={"patches": list(ops)})
+
+
+def _keys(tree):
+    return [child["key"] for child in tree["children"]]
 
 
 class TestRemoteTree(unittest.TestCase):
     def setUp(self):
         self.tree = RemoteTree()
 
-    def test_starts_empty(self):
+    def test_a_snapshot_becomes_the_root(self):
         self.assertTrue(self.tree.is_empty)
-        self.assertEqual(self.tree.node_count(), 0)
-        self.assertIsNone(self.tree.snapshot_json())
-
-    def test_applies_snapshot(self):
-        ops = self.tree.apply(revision=1, base_revision=0, kind="snapshot",
-                              payload={"tree": sample_tree()})
-        self.assertEqual(ops, 1)
+        self.tree.apply(**_snapshot(_root()))
+        self.assertFalse(self.tree.is_empty)
         self.assertEqual(self.tree.revision, 1)
-        self.assertEqual(self.tree.node_count(), 4)
+        self.assertEqual(self.tree.node_count(), 3)
+        self.assertEqual(self.tree.snapshot_json()["key"], "root")
 
-    def test_rejects_snapshot_without_tree(self):
-        with self.assertRaises(MirrorApplyError):
-            self.tree.apply(revision=1, base_revision=0, kind="snapshot",
-                            payload={"tree": None})
+    def test_snapshot_json_is_a_copy(self):
+        self.tree.apply(**_snapshot(_root()))
+        copy = self.tree.snapshot_json()
+        copy["children"].clear()
+        self.assertEqual(self.tree.node_count(), 3)
 
-    def test_rejects_stale_patch(self):
-        self.tree.apply(revision=1, base_revision=0, kind="snapshot",
-                        payload={"tree": sample_tree()})
+    def test_create_inserts_at_the_given_index(self):
+        self.tree.apply(**_snapshot(_root()))
+        self.tree.apply(**_patch(2, 1, {
+            "op": "create", "key": "c", "parent_key": "root", "index": 1,
+            "tree": _node("c", "C"),
+        }))
+        self.assertEqual(_keys(self.tree.snapshot_json()), ["a", "c", "b"])
+        self.assertEqual(self.tree.revision, 2)
+
+    def test_delete_removes_a_child(self):
+        self.tree.apply(**_snapshot(_root()))
+        self.tree.apply(**_patch(2, 1, {
+            "op": "delete", "key": "a", "parent_key": "root",
+        }))
+        self.assertEqual(_keys(self.tree.snapshot_json()), ["b"])
+
+    def test_move_reorders_a_child(self):
+        self.tree.apply(**_snapshot(_root()))
+        self.tree.apply(**_patch(2, 1, {
+            "op": "move", "key": "b", "parent_key": "root", "index": 0,
+        }))
+        self.assertEqual(_keys(self.tree.snapshot_json()), ["b", "a"])
+
+    def test_replace_swaps_a_child(self):
+        self.tree.apply(**_snapshot(_root()))
+        self.tree.apply(**_patch(2, 1, {
+            "op": "replace", "key": "b", "parent_key": "root",
+            "tree": _node("b", "B2"),
+        }))
+        root = self.tree.snapshot_json()
+        values = {c["key"]: c["props"]["value"] for c in root["children"]}
+        self.assertEqual(values["b"], "B2")
+
+    def test_update_merges_props_and_style(self):
+        self.tree.apply(**_snapshot(_root()))
+        self.tree.apply(**_patch(2, 1, {
+            "op": "update", "key": "a",
+            "props": {"value": "A2", "_visible": False},
+            "style": {"color": "#FF000000", "opacity": None},
+        }))
+        node = self.tree.snapshot_json()["children"][0]
+        self.assertEqual(node["props"]["value"], "A2")
+        self.assertFalse(node["visible"])
+        self.assertEqual(node["style"]["color"], "#FF000000")
+        self.assertNotIn("opacity", node["style"])
+
+    def test_update_maps_meta_keys_to_node_metadata(self):
+        self.tree.apply(**_snapshot(_root()))
+        self.tree.apply(**_patch(2, 1, {
+            "op": "update", "key": "a",
+            "props": {"_events": ["click"], "_has_events": True,
+                      "_expand": 2, "_tooltip": "hi"},
+        }))
+        node = self.tree.snapshot_json()["children"][0]
+        self.assertEqual(node["events"], ["click"])
+        self.assertTrue(node["has_events"])
+        self.assertEqual(node["expand"], 2)
+        self.assertEqual(node["tooltip"], "hi")
+
+    def test_a_stale_patch_is_rejected(self):
+        self.tree.apply(**_snapshot(_root()))
         with self.assertRaises(MirrorApplyError) as ctx:
-            self.tree.apply(revision=2, base_revision=0, kind="patch",
-                            payload={"patches": []})
-        self.assertIn("stale_base_revision", str(ctx.exception))
+            self.tree.apply(**_patch(9, 7, {
+                "op": "delete", "key": "a", "parent_key": "root",
+            }))
+        self.assertIn("stale_base", str(ctx.exception))
+        # The tree is untouched.
+        self.assertEqual(self.tree.revision, 1)
+        self.assertEqual(_keys(self.tree.snapshot_json()), ["a", "b"])
 
-    def test_rejects_unknown_kind(self):
+    def test_an_unknown_op_is_rejected(self):
+        self.tree.apply(**_snapshot(_root()))
         with self.assertRaises(MirrorApplyError):
-            self.tree.apply(revision=1, base_revision=0, kind="mystery",
-                            payload={})
+            self.tree.apply(**_patch(2, 1, {"op": "frobnicate", "key": "a"}))
 
-    # ── individual patch ops (ViewFactory semantics) ─────────────────────
+    def test_a_root_level_replace_swaps_the_whole_tree(self):
+        self.tree.apply(**_snapshot(_root()))
+        self.tree.apply(**_patch(2, 1, {
+            "op": "replace", "key": "root", "parent_key": "",
+            "tree": _node("root", type_="Scaffold", children=[_node("z", "Z")]),
+        }))
+        root = self.tree.snapshot_json()
+        self.assertEqual(root["type"], "Scaffold")
+        self.assertEqual(_keys(root), ["z"])
 
-    def _with_snapshot(self):
-        self.tree.apply(revision=1, base_revision=0, kind="snapshot",
-                        payload={"tree": sample_tree()})
-
-    def _find(self, key):
-        return _find_in(self.tree.snapshot_json(), key)
-
-    def test_patch_create_inserts_at_index(self):
-        self._with_snapshot()
-        self.tree.apply(revision=2, base_revision=1, kind="patch",
-                        payload={"patches": [{
-                            "op": "create", "key": "sub",
-                            "parent_key": "body", "index": 1,
-                            "tree": node("Text", "sub",
-                                         props={"value": "inserted"}),
-                        }]})
-        body = self._find("body")
-        self.assertEqual([c["key"] for c in body["children"]],
-                         ["title", "sub", "btn"])
-
-    def test_patch_create_at_root_replaces_root(self):
-        self._with_snapshot()
-        self.tree.apply(revision=2, base_revision=1, kind="patch",
-                        payload={"patches": [{
-                            "op": "create", "key": "_page2",
-                            "parent_key": "", "index": 0,
-                            "tree": node("Stack", "_page2", children=[
-                                node("Text", "solo",
-                                     props={"value": "new root"})]),
-                        }]})
-        self.assertEqual(self.tree.snapshot_json()["key"], "_page2")
-
-    def test_patch_delete_removes_subtree(self):
-        self._with_snapshot()
-        self.tree.apply(revision=2, base_revision=1, kind="patch",
-                        payload={"patches": [{
-                            "op": "delete", "key": "btn",
-                            "parent_key": "body",
-                        }]})
-        body = self._find("body")
-        self.assertEqual([c["key"] for c in body["children"]], ["title"])
-
-    def test_patch_update_merges_props_and_style(self):
-        self._with_snapshot()
-        self.tree.apply(revision=2, base_revision=1, kind="patch",
-                        payload={"patches": [{
-                            "op": "update", "key": "title",
-                            "parent_key": "body",
-                            "props": {"value": "Changed"},
-                            "style": {"opacity": 0.5},
-                        }]})
-        title = self._find("title")
-        self.assertEqual(title["props"]["value"], "Changed")
-        self.assertEqual(title["style"]["opacity"], 0.5)
-
-    def test_patch_move_reorders(self):
-        self._with_snapshot()
-        self.tree.apply(revision=2, base_revision=1, kind="patch",
-                        payload={"patches": [{
-                            "op": "move", "key": "btn",
-                            "parent_key": "body", "index": 0,
-                        }]})
-        body = self._find("body")
-        self.assertEqual([c["key"] for c in body["children"]],
-                         ["btn", "title"])
-
-    def test_patch_replace_swaps_in_place(self):
-        self._with_snapshot()
-        self.tree.apply(revision=2, base_revision=1, kind="patch",
-                        payload={"patches": [{
-                            "op": "replace", "key": "btn",
-                            "new_key": "link", "parent_key": "body",
-                            "index": 1,
-                            "tree": node("Text", "link",
-                                         props={"value": "not a button"}),
-                        }]})
-        body = self._find("body")
-        self.assertEqual([c["key"] for c in body["children"]],
-                         ["title", "link"])
-
-    def test_patch_unknown_parent_raises(self):
-        self._with_snapshot()
-        with self.assertRaises(MirrorApplyError):
-            self.tree.apply(revision=2, base_revision=1, kind="patch",
-                            payload={"patches": [{
-                                "op": "create", "key": "orphan",
-                                "parent_key": "missing", "index": 0,
-                                "tree": node("Text", "orphan"),
-                            }]})
-
-    def test_patch_unknown_update_key_raises(self):
-        self._with_snapshot()
-        with self.assertRaises(MirrorApplyError):
-            self.tree.apply(revision=2, base_revision=1, kind="patch",
-                            payload={"patches": [{
-                                "op": "update", "key": "ghost",
-                                "parent_key": "body", "props": {},
-                            }]})
-
-    def test_reset_clears_everything(self):
-        self._with_snapshot()
+    def test_reset_empties_the_tree(self):
+        self.tree.apply(**_snapshot(_root()))
         self.tree.reset()
         self.assertTrue(self.tree.is_empty)
         self.assertEqual(self.tree.revision, 0)
 
 
-class TestDiffRoundTrip(unittest.TestCase):
-    """Patches from Pydrud's real diff engine apply cleanly to the mirror."""
-
-    def _tree(self, text: str, extra=None):
-        children = [Text(text, key="title")]
-        if extra:
-            children.append(Button(extra, key="extra"))
-        return Column(children=children, key="body")
-
-    def test_property_update(self):
-        old = self._tree("Hello")
-        new = self._tree("Goodbye")
-        transaction = RenderTransaction.create(
-            revision=2, base_revision=1, kind="patch",
-            payload={"patches": [p.to_dict() for p in TreeDiff.diff(old, new)]})
-        mirror = RemoteTree()
-        mirror.apply(revision=1, base_revision=0, kind="snapshot",
-                     payload={"tree": old.to_dict()})
-        mirror.apply(revision=transaction.revision,
-                     base_revision=transaction.base_revision,
-                     kind="patch",
-                     payload={"patches": transaction.payload["patches"]})
-        self.assertEqual(
-            _find_in(mirror.snapshot_json(), "title")["props"]["value"],
-            "Goodbye")
-
-    def test_property_insert_and_remove(self):
-        old = self._tree("Hello", extra="Remove me")
-        new = self._tree("Hello", extra=None)
-        new.children = [c for c in new.children if c.key != "extra"]
-
-        mirror = RemoteTree()
-        mirror.apply(revision=1, base_revision=0, kind="snapshot",
-                     payload={"tree": old.to_dict()})
-
-        # Add then remove, through the real diff engine.
-        grown = self._tree("Hello", extra="Remove me")
-        grown.children.append(Text("appended", key="appended"))
-        add_tx = RenderTransaction.create(
-            revision=2, base_revision=1, kind="patch",
-            payload={"patches": [p.to_dict() for p in TreeDiff.diff(old, grown)]})
-        mirror.apply(revision=2, base_revision=1, kind="patch",
-                     payload=add_tx.payload)
-        self.assertIsNotNone(_find_in(mirror.snapshot_json(), "appended"))
-
-        remove_tx = RenderTransaction.create(
-            revision=3, base_revision=2, kind="patch",
-            payload={"patches": [p.to_dict() for p in TreeDiff.diff(grown, new)]})
-        mirror.apply(revision=3, base_revision=2, kind="patch",
-                     payload=remove_tx.payload)
-        snap = mirror.snapshot_json()
-        self.assertIsNone(_find_in(snap, "appended"))
-        self.assertIsNone(_find_in(snap, "extra"))
-        self.assertIsNotNone(_find_in(snap, "title"))
-
-
 class TestMirrorWidget(unittest.TestCase):
-    def test_serialises_the_remote_node_verbatim(self):
-        remote = sample_tree()
-        widget = MirrorWidget(remote)
-        self.assertEqual(widget.to_dict(), remote)
+    def test_re_emits_the_remote_node_verbatim(self):
+        node = {
+            "type": "Button", "key": "save",
+            "style": {"bg": "#FF112233", "padding": 12},
+            "props": {"text": "Save", "variant": "filled"},
+            "events": ["click"],
+            "expand": 1,
+            "children": [],
+        }
+        widget = MirrorWidget(node, on_event=lambda *a: None)
+        out = widget.to_dict()
+        self.assertEqual(out["type"], "Button")
+        self.assertEqual(remote_key(out["key"]), "save")
+        self.assertEqual(out["style"], {"bg": "#FF112233", "padding": 12})
+        self.assertEqual(out["props"], {"text": "Save", "variant": "filled"})
+        self.assertEqual(out["expand"], 1)
+        self.assertTrue(out["has_events"])
+        self.assertEqual(out["events"], ["click"])
 
-    def test_deep_copies_so_mutations_do_not_leak(self):
-        remote = sample_tree()
-        widget = MirrorWidget(remote)
-        dumped = widget.to_dict()
-        dumped["children"][0]["children"][0]["props"]["value"] = "mutated"
-        self.assertEqual(widget.to_dict()["children"][0]["children"][0]
-                         ["props"]["value"], "Hello")
+    def test_remote_keys_are_namespaced_and_round_trip(self):
+        widget = MirrorWidget(_node("_page"), on_event=lambda *a: None)
+        # A project's page root is `_page` — the same framework key as
+        # Pydash's own root — so the mirror must re-key it out of the way.
+        self.assertNotEqual(widget.key, "_page")
+        self.assertEqual(widget.key, mirror_key("_page"))
+        self.assertEqual(widget.remote_key(), "_page")
+        self.assertEqual(remote_key(widget.key), "_page")
 
-    def test_binds_forwarding_handlers_for_remote_events(self):
+    def test_children_are_rebuilt_recursively(self):
+        node = _root()
+        widget = MirrorWidget(node, on_event=lambda *a: None)
+        self.assertEqual(len(widget.children), 2)
+        self.assertEqual(widget.children[0].remote_key(), "a")
+
+    def test_events_are_bound_and_forwarded(self):
         seen = []
+        node = _node("btn", type_="Button")
+        node["events"] = ["click", "long_press"]
+        widget = MirrorWidget(node, on_event=lambda name, event: seen.append(name))
 
-        def on_event(kind, event):
-            seen.append((kind, event))
+        class _Event:
+            key = "btn"
+            value = None
 
-        widget = MirrorWidget(sample_tree(), on_event=on_event)
-        button = _find_widget(widget, "btn")
-        self.assertIn("click", button.event_handlers)
-        button.event_handlers["click"]({"type": "click", "key": "btn",
-                                        "data": {}})
-        self.assertEqual(seen, [("click", {"type": "click", "key": "btn",
-                                           "data": {}})])
+        widget.event_handlers["click"](_Event())
+        self.assertEqual(seen, ["click"])
 
-    def test_widget_type_matches_remote_type(self):
-        widget = MirrorWidget(sample_tree())
-        self.assertEqual(widget._widget_type, "Stack")
+    def test_a_page_rooted_remote_tree_does_not_collide_with_the_host(self):
+        from pydrud import Column
 
-    def test_key_is_the_remote_key(self):
-        widget = MirrorWidget(sample_tree())
-        self.assertEqual(widget.key, "_page")
+        remote = {
+            "type": "Column", "key": "_page", "style": {}, "props": {},
+            "children": [{
+                "type": "Text", "key": "_page._body", "style": {},
+                "props": {"value": "Hello"}, "children": [],
+            }],
+        }
+        # The host tree already owns `_page` (Pydrud's page root); mirroring a
+        # project whose root is also `_page` used to raise
+        # "Duplicate Pydrud widget key '_page'" and blank the preview.
+        host = Column(key="pd_stage", children=[
+            Column(key="_page", children=[]),
+            MirrorWidget(remote, on_event=lambda *a: None),
+        ])
+        self.assertEqual(host.to_dict()["key"], "pd_stage")
 
-
-def _find_in(node, key):
-    if node is None:
-        return None
-    if node.get("key") == key:
-        return node
-    for child in node.get("children") or []:
-        found = _find_in(child, key)
-        if found is not None:
-            return found
-    return None
-
-
-def _find_widget(widget, key):
-    for w, _ in widget.walk():
-        if w.key == key:
-            return w
-    return None
+    def test_a_malformed_node_is_rejected(self):
+        with self.assertRaises(MirrorApplyError):
+            MirrorWidget({"key": "x"}, on_event=lambda *a: None)
+        with self.assertRaises(MirrorApplyError):
+            MirrorWidget({"type": "Text"}, on_event=lambda *a: None)
 
 
 if __name__ == "__main__":

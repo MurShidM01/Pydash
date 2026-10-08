@@ -1,4 +1,9 @@
-"""Tests for preview URI parsing — the QR payload contract."""
+"""The preview URI parser — Pydash's copy of the host's QR contract.
+
+Every case the ``pydrud dev`` server would also refuse is covered here, so a
+malformed or hostile code is rejected with the same machine-readable code on
+both ends.
+"""
 
 import os
 import sys
@@ -8,108 +13,144 @@ import urllib.parse
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from app.config import PREVIEW_PROTOCOL_VERSION, RENDERER_PROTOCOL_VERSION  # noqa: E402
+from app.config import (  # noqa: E402
+    PREVIEW_PROTOCOL_VERSION,
+    RENDERER_PROTOCOL_VERSION,
+)
 from app.preview.models import Endpoint  # noqa: E402
 from app.preview.uri import (  # noqa: E402
-    PreviewUriError, normalise_uri, parse_preview_uri,
+    PreviewUriError,
+    build_uri,
+    build_uri_from_endpoint,
+    normalise_uri,
+    parse_preview_uri,
 )
 
-
-def build_uri(**overrides) -> str:
-    params = {
-        "host": "192.168.1.20",
-        "port": "8597",
-        "session": "abc-123",
-        "token": "s3cret-token",
-        "protocol": str(PREVIEW_PROTOCOL_VERSION),
-        "renderer": str(RENDERER_PROTOCOL_VERSION),
-        "project": "local.deadbeef",
-        "name": "My Project",
-    }
-    params.update({k: str(v) for k, v in overrides.items()
-                   if v is not None})
-    for key, value in list(overrides.items()):
-        if value is None:
-            params.pop(key, None)
-    return "pydrud://preview/connect?" + urllib.parse.urlencode(params)
+_BASE = {
+    "host": "192.168.1.20",
+    "port": "8597",
+    "session": "sess-1",
+    "token": "tok-abc",
+    "protocol": str(PREVIEW_PROTOCOL_VERSION),
+    "renderer": str(RENDERER_PROTOCOL_VERSION),
+    "project": "proj",
+    "name": "Demo App",
+}
 
 
-class TestPreviewUri(unittest.TestCase):
-    def test_parses_a_valid_uri(self):
-        target = parse_preview_uri(build_uri())
+def _raw(**overrides) -> str:
+    """Compose a ``pydrud://`` URI with arbitrary query values."""
+    query = dict(_BASE)
+    query.update(overrides)
+    return "pydrud://preview/connect?" + urllib.parse.urlencode(query)
+
+
+class TestParsePreviewUri(unittest.TestCase):
+    def test_parses_a_valid_code(self):
+        target = parse_preview_uri(_raw())
         self.assertEqual(target.host, "192.168.1.20")
         self.assertEqual(target.port, 8597)
-        self.assertEqual(target.session_id, "abc-123")
-        self.assertEqual(target.token, "s3cret-token")
-        self.assertEqual(target.project_name, "My Project")
+        self.assertEqual(target.session_id, "sess-1")
+        self.assertEqual(target.token, "tok-abc")
+        self.assertEqual(target.project_id, "proj")
+        self.assertEqual(target.project_name, "Demo App")
+        self.assertEqual(target.protocol_version, PREVIEW_PROTOCOL_VERSION)
+        self.assertEqual(target.renderer_protocol_version,
+                         RENDERER_PROTOCOL_VERSION)
         self.assertEqual(target.describe(), "192.168.1.20:8597")
 
-    def test_roundtrips_urlencoded_names(self):
-        target = parse_preview_uri(build_uri(name="My Fancy Project & Co"))
-        self.assertEqual(target.project_name, "My Fancy Project & Co")
+    def test_rejects_anything_that_is_not_a_preview_uri(self):
+        for bad in (
+            "https://example.com/preview",
+            "pydash://preview/connect?host=192.168.1.20",
+            "pydrud://other/connect?host=192.168.1.20",
+            "pydrud://preview/other?host=192.168.1.20",
+            "just some text",
+            "",
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(PreviewUriError) as ctx:
+                    parse_preview_uri(bad)
+                self.assertEqual(ctx.exception.code, "invalid_uri")
 
-    def test_rejects_wrong_scheme(self):
-        with self.assertRaises(PreviewUriError) as ctx:
-            parse_preview_uri("https://preview/connect?host=x")
-        self.assertEqual(ctx.exception.code, "invalid_uri")
+    def test_rejects_a_missing_parameter(self):
+        for name in ("host", "port", "session", "token", "protocol",
+                     "renderer"):
+            with self.subTest(missing=name):
+                query = dict(_BASE)
+                del query[name]
+                uri = "pydrud://preview/connect?" + urllib.parse.urlencode(query)
+                with self.assertRaises(PreviewUriError) as ctx:
+                    parse_preview_uri(uri)
+                self.assertEqual(ctx.exception.code, "invalid_uri")
 
-    def test_rejects_wrong_authority(self):
+    def test_rejects_a_duplicated_parameter(self):
+        uri = _raw() + "&host=10.0.0.1"
         with self.assertRaises(PreviewUriError):
-            parse_preview_uri(
-                "pydrud://other/connect?" + urllib.parse.urlencode(
-                    {"host": "h", "port": "1", "session": "s", "token": "t",
-                     "protocol": "1", "renderer": "2"}))
+            parse_preview_uri(uri)
 
-    def test_rejects_missing_parameter(self):
-        for missing in ("host", "port", "session", "token", "protocol",
-                        "renderer"):
-            with self.assertRaises(PreviewUriError) as ctx:
-                parse_preview_uri(build_uri(**{missing: None}))
-            self.assertEqual(ctx.exception.code, "invalid_uri",
-                             msg=f"missing {missing}")
-
-    def test_rejects_preview_protocol_mismatch(self):
+    def test_rejects_a_protocol_version_mismatch(self):
         with self.assertRaises(PreviewUriError) as ctx:
-            parse_preview_uri(build_uri(protocol=2))
+            parse_preview_uri(_raw(protocol="99"))
         self.assertEqual(ctx.exception.code, "unsupported_version")
 
-    def test_rejects_renderer_protocol_mismatch(self):
+    def test_rejects_a_renderer_version_mismatch(self):
         with self.assertRaises(PreviewUriError) as ctx:
-            parse_preview_uri(build_uri(renderer=1))
+            parse_preview_uri(_raw(renderer="99"))
         self.assertEqual(ctx.exception.code, "unsupported_renderer")
 
-    def test_rejects_unconnectable_host(self):
-        for host in ("0.0.0.0", "::", "bad host", "host/slash"):
-            with self.assertRaises(PreviewUriError, msg=host):
-                parse_preview_uri(build_uri(host=host))
+    def test_rejects_a_non_numeric_port(self):
+        for port in ("abc", "", "70000", "0", "-1"):
+            with self.subTest(port=port):
+                with self.assertRaises(PreviewUriError) as ctx:
+                    parse_preview_uri(_raw(port=port))
+                self.assertEqual(ctx.exception.code, "invalid_uri")
 
-    def test_rejects_bad_port(self):
-        for port in ("0", "99999", "abc"):
-            with self.assertRaises(PreviewUriError, msg=port):
-                parse_preview_uri(build_uri(port=port))
+    def test_rejects_an_unconnectable_host(self):
+        for host in ("0.0.0.0", "::", "  ", "a b", "1.2.3.4/path"):
+            with self.subTest(host=host):
+                with self.assertRaises(PreviewUriError) as ctx:
+                    parse_preview_uri(_raw(host=host))
+                self.assertEqual(ctx.exception.code, "invalid_uri")
 
-    def test_accepts_ipv6_and_hostnames(self):
-        self.assertEqual(parse_preview_uri(
-            build_uri(host="fe80::1")).host, "fe80::1")
-        self.assertEqual(parse_preview_uri(
-            build_uri(host="dev.local")).host, "dev.local")
-
-    def test_normalise_strips_noise(self):
-        noisy = "  'pydrud://preview/connect?host=h'  "
-        self.assertTrue(normalise_uri(noisy).startswith("pydrud://"))
-        self.assertEqual(normalise_uri(""), "")
-        self.assertEqual(normalise_uri(None), "")
-
-    def test_normalise_restores_scheme(self):
-        trimmed = "preview/connect?host=h"
-        self.assertEqual(normalise_uri(trimmed), "pydrud://preview/connect?host=h")
+    def test_accepts_hostnames_and_bracketed_ipv6(self):
+        self.assertEqual(parse_preview_uri(_raw(host="dev.local")).host,
+                         "dev.local")
+        self.assertEqual(parse_preview_uri(_raw(host="[fe80::1]")).host,
+                         "fe80::1")
 
 
-class TestEndpoint(unittest.TestCase):
-    def test_describe(self):
-        endpoint = Endpoint(host="10.0.0.5", port=8597, session_id="s",
-                            token="t")
-        self.assertEqual(endpoint.describe(), "10.0.0.5:8597")
+class TestNormaliseUri(unittest.TestCase):
+    def test_strips_quotes_and_whitespace(self):
+        self.assertEqual(normalise_uri('  "pydrud://x"  '), "pydrud://x")
+
+    def test_restores_a_scheme_that_was_dropped_on_copy(self):
+        self.assertEqual(
+            normalise_uri("preview/connect?host=192.168.1.20"),
+            "pydrud://preview/connect?host=192.168.1.20")
+
+    def test_leaves_an_empty_string_alone(self):
+        self.assertEqual(normalise_uri("   "), "")
+
+
+class TestBuildUri(unittest.TestCase):
+    def test_round_trips_through_the_parser(self):
+        uri = build_uri(host="10.0.0.5", port=9000, session_id="s",
+                        token="t", project_id="p", project_name="N")
+        target = parse_preview_uri(uri)
+        self.assertEqual(target.host, "10.0.0.5")
+        self.assertEqual(target.port, 9000)
+        self.assertEqual(target.project_name, "N")
+
+    def test_round_trips_from_an_endpoint(self):
+        endpoint = Endpoint(host="192.168.0.9", port=8597, session_id="sess",
+                            token="tok", project_id="proj",
+                            project_name="Demo")
+        target = parse_preview_uri(build_uri_from_endpoint(endpoint))
+        self.assertEqual(target.host, endpoint.host)
+        self.assertEqual(target.port, endpoint.port)
+        self.assertEqual(target.session_id, endpoint.session_id)
+        self.assertEqual(target.token, endpoint.token)
 
 
 if __name__ == "__main__":

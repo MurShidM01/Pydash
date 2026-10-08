@@ -1,358 +1,326 @@
-"""End-to-end preview protocol tests: Pydash's client vs a real App.
+"""The preview client and session, against an in-process dev server.
 
-The harness in ``tests/preview_server_harness.py`` reproduces the
-``pydrud dev`` server and hands the socket to a genuine
-:class:`pydrud.App`, so these tests exercise the complete wire contract:
-handshake, rejection codes, revisioned transactions, ACK/NACK, resync,
-event forwarding, page commands and the native service bridge.
+A tiny socket server speaks the same frames ``pydrud dev`` does — the v1
+authenticated handshake followed by renderer-v2 transactions — so the client
+is exercised end to end without a device or the real host.
 """
 
+import json
 import os
+import socket
 import sys
 import threading
 import time
 import unittest
-from unittest import mock
 
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
-from pydrud import App, Button, Column, State, Text  # noqa: E402
-
-from tests.preview_server_harness import (  # noqa: E402
-    HarnessSession, PreviewServerHarness,
+from app.config import (  # noqa: E402
+    PREVIEW_PROTOCOL,
+    PREVIEW_PROTOCOL_VERSION,
+    RENDERER_PROTOCOL_VERSION,
 )
-
 from app.preview.client import PreviewClient, PreviewHandshakeError  # noqa: E402
 from app.preview.mirror import RemoteTree  # noqa: E402
-from app.preview.models import Endpoint  # noqa: E402
-
-METRICS = {"width": 400, "height": 800, "density": 2.0}
-
-
-def build_counter_app():
-    """A small project whose button increments a bound State."""
-    counter = State(0, name="counter")
-    toasts = []
-    dialogs = []
-
-    def target(page):
-        page.add(Column(children=[
-            Text(f"Count: {counter.value}", key="count_text"),
-            Button("+1", key="inc").on_click(lambda _e: _bump()),
-            Button("toast", key="toast").on_click(lambda _e: _toast(page)),
-            Button("ask", key="ask").on_click(lambda _e: _ask(page)),
-        ], key="body"))
-
-    def _bump():
-        counter.value += 1
-
-    def _toast(page):
-        page.toast("hello from the project")
-        toasts.append("sent")
-
-    def _ask(page):
-        page.dialog.confirm("Run the migration?", title="Continue?").then(
-            lambda value: dialogs.append(value))
-
-    app = App(target=target, title="Counter Project").bind(counter)
-    return app, counter, toasts, dialogs
+from app.preview.models import ConnectionState, Endpoint  # noqa: E402
+from app.preview.session import PreviewSession  # noqa: E402
 
 
-class PreviewProtocolCase(unittest.TestCase):
-    """Shared plumbing: one harness server + one connected client."""
+def _welcome(port, **overrides):
+    message = {
+        "type": "preview_welcome",
+        "protocol": PREVIEW_PROTOCOL,
+        "protocol_version": PREVIEW_PROTOCOL_VERSION,
+        "renderer_protocol_version": RENDERER_PROTOCOL_VERSION,
+        "session_id": "sess-1",
+        "port": port,
+        "project": {"id": "proj", "name": "Demo App"},
+        "capabilities": {},
+        "limits": {},
+    }
+    message.update(overrides)
+    return message
 
-    def setUp(self):
-        self.app, self.counter, self.toasts, self.dialogs = build_counter_app()
-        self.session = HarnessSession.create(project_name="Counter Project")
-        self.server = PreviewServerHarness(self.app, self.session).start()
 
-        self.tree = RemoteTree()
-        self.commands: list = []
-        self.transactions: list = []
-        self.client = PreviewClient(
-            self.endpoint(), self.tree,
-            on_command=self.commands.append,
-            on_transaction=self._note_transaction,
-        )
+def _snapshot(revision, tree):
+    return {
+        "cmd": "render_transaction",
+        "protocol_version": RENDERER_PROTOCOL_VERSION,
+        "transaction_id": f"tx{revision}",
+        "revision": revision,
+        "base_revision": 0,
+        "kind": "snapshot",
+        "tree": tree,
+    }
 
-    def tearDown(self):
-        try:
-            self.client.disconnect("test teardown")
-        except Exception:
-            pass
-        self.server.stop()
-        try:
-            self.app.stop()
-        except Exception:
-            pass
 
-    def endpoint(self, **overrides) -> Endpoint:
-        fields = dict(
-            host="127.0.0.1", port=self.server.port,
-            session_id=self.session.session_id,
-            token=self.session.token,
-            project_id=self.session.project_id,
-            project_name=self.session.project_name,
-        )
-        fields.update(overrides)
-        return Endpoint(**fields)
+def _patch(revision, base, ops):
+    return {
+        "cmd": "render_transaction",
+        "protocol_version": RENDERER_PROTOCOL_VERSION,
+        "transaction_id": f"tx{revision}",
+        "revision": revision,
+        "base_revision": base,
+        "kind": "patch",
+        "patches": ops,
+    }
 
-    def _note_transaction(self, kind, ops):
-        # Runs on the client's reader thread immediately after apply(), and
-        # only that thread ever applies transactions — so tree.revision here
-        # is exactly the revision of the transaction just applied.
-        self.transactions.append((kind, ops, self.tree.revision))
 
-    # ── helpers ───────────────────────────────────────────────────────────
+def _tree():
+    return {
+        "type": "Column", "key": "root", "props": {}, "style": {},
+        "children": [{"type": "Text", "key": "hello", "props": {"value": "Hi"},
+                      "style": {}, "children": []}],
+    }
 
-    def wait_for(self, predicate, timeout=5.0):
+
+class FakeDevServer:
+    """A one-connection stand-in for ``pydrud dev``."""
+
+    def __init__(self, *, reject=None, welcome_overrides=None):
+        self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._server.bind(("127.0.0.1", 0))
+        self._server.listen(1)
+        self.port = self._server.getsockname()[1]
+
+        self.reject = reject
+        self.welcome_overrides = dict(welcome_overrides or {})
+        self.received: list = []
+        self._conn = None
+        self._lock = threading.Lock()
+        self._running = False
+        self._thread = None
+        self.connected = threading.Event()
+
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._serve, daemon=True,
+                                        name="fake-dev-server")
+        self._thread.start()
+        return self
+
+    def stop(self):
+        self._running = False
+        for sock in (self._conn, self._server):
+            try:
+                if sock:
+                    sock.close()
+            except OSError:
+                pass
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, *exc):
+        self.stop()
+
+    def send(self, payload: dict):
+        conn = self._conn
+        if conn is None:
+            raise RuntimeError("no client connected")
+        conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+
+    def wait_for(self, predicate, timeout=3.0):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            try:
-                if predicate():
+            with self._lock:
+                if predicate(list(self.received)):
                     return True
-            except Exception:
-                pass
-            time.sleep(0.02)
+            time.sleep(0.01)
         return False
 
-    def find(self, key):
-        return self._find_in(self.tree.snapshot_json(), key)
+    def wait_connected(self, timeout=3.0):
+        return self.connected.wait(timeout)
 
-    @staticmethod
-    def _find_in(node, key):
-        if node is None:
-            return None
-        if node.get("key") == key:
-            return node
-        for child in node.get("children") or []:
-            found = PreviewProtocolCase._find_in(child, key)
-            if found is not None:
-                return found
-        return None
+    def of_type(self, type_):
+        with self._lock:
+            return [m for m in self.received if m.get("type") == type_]
 
+    # ── server loop ───────────────────────────────────────────────────────
 
-class TestHandshake(PreviewProtocolCase):
-    def test_welcome_carries_project_metadata(self):
-        info = self.client.connect(metrics=METRICS)
-        self.assertEqual(info.project_name, "Counter Project")
-        self.assertEqual(info.session_id, self.session.session_id)
-        self.assertTrue(info.capabilities.get("incremental_patches"))
-        self.client.disconnect()
+    def _serve(self):
+        try:
+            conn, _ = self._server.accept()
+        except OSError:
+            return
+        self._conn = conn
+        self.connected.set()
+        buffer = b""
+        try:
+            while self._running:
+                data = conn.recv(65536)
+                if not data:
+                    break
+                buffer += data
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    text = line.decode("utf-8").strip()
+                    if text:
+                        self._on_message(json.loads(text))
+        except (OSError, ValueError):
+            pass
 
-    def test_wrong_token_is_rejected(self):
-        with self.assertRaises(PreviewHandshakeError) as ctx:
-            self.client = PreviewClient(
-                self.endpoint(token="wrong-token"), self.tree)
-            self.client.connect(metrics=METRICS)
-        self.assertEqual(ctx.exception.code, "authentication_failed")
-
-    def test_wrong_session_is_rejected(self):
-        with self.assertRaises(PreviewHandshakeError) as ctx:
-            self.client = PreviewClient(
-                self.endpoint(session_id="00000000-0000-0000-0000-000000000000"),
-                self.tree)
-            self.client.connect(metrics=METRICS)
-        self.assertEqual(ctx.exception.code, "authentication_failed")
-
-    def test_refused_connection_reports_failure(self):
-        client = PreviewClient(
-            Endpoint(host="127.0.0.1", port=1, session_id="s", token="t"),
-            RemoteTree())
-        with self.assertRaises(OSError):
-            client.connect(metrics=METRICS)
+    def _on_message(self, message: dict):
+        with self._lock:
+            self.received.append(message)
+        if message.get("type") == "preview_hello":
+            if self.reject is not None:
+                self.send(self.reject)
+            else:
+                self.send(_welcome(self.port, **self.welcome_overrides))
 
 
-class TestTransactions(PreviewProtocolCase):
-    def test_snapshot_arrives_and_is_acked(self):
-        self.client.connect(metrics=METRICS)
-        self.assertTrue(self.wait_for(lambda: bool(self.transactions)),
-                        "no snapshot arrived")
-        # A fresh session starts with a full snapshot at revision 1. Assert
-        # on the *first applied transaction* rather than the mirror's live
-        # revision: our `ready` event legitimately makes the server re-render
-        # (see test_stale_mirror_triggers_snapshot_resync), so by the time
-        # this thread reads tree.revision a second snapshot may already have
-        # been applied on the reader thread. Whether that has happened yet is
-        # pure scheduling luck (and on Windows' coarse sleep granularity it
-        # reliably has), so the old `self.assertEqual(self.tree.revision, 1)`
-        # was inherently flaky.
-        kind, _ops, revision = self.transactions[0]
-        self.assertEqual(kind, "snapshot")
-        self.assertEqual(revision, 1)
-        self.assertFalse(self.tree.is_empty)
-        self.assertEqual(self.find("count_text")["props"]["value"],
-                         "Count: 0")
-        # The server advances its confirmed revision only on our ACK.
-        self.assertTrue(self.wait_for(
-            lambda: self.app._confirmed_revision >= 1))
-        self.client.disconnect()
-
-    def test_click_event_round_trips_as_a_patch(self):
-        self.client.connect(metrics=METRICS)
-        self.assertTrue(self.wait_for(lambda: not self.tree.is_empty))
-        self.assertTrue(self.client.send_event("click", "inc", {}))
-        self.assertTrue(self.wait_for(
-            lambda: self.find("count_text")["props"]["value"] == "Count: 1"),
-            "patched text never arrived")
-        self.assertGreaterEqual(self.tree.revision, 2)
-        self.assertTrue(any(kind == "patch"
-                            for kind, _ops, _rev in self.transactions))
-        self.client.disconnect()
-
-    def test_stale_mirror_triggers_snapshot_resync(self):
-        self.client.connect(metrics=METRICS)
-        self.assertTrue(self.wait_for(lambda: not self.tree.is_empty))
-        # Let the server settle first: the client's `ready` event makes it
-        # re-render once more, and that snapshot would overwrite our drift.
-        self.assertTrue(self.wait_for(
-            lambda: self.app._confirmed_revision >= 1
-            and not self.app._inflight
-            and not self.app._render_pending))
-        self.assertGreaterEqual(self.tree.revision, 1)
-        # Pretend the mirror drifted (e.g. a patch was lost).
-        with self.tree._lock:
-            self.tree.revision = 99
-        self.assertTrue(self.client.send_event("click", "inc", {}))
-        self.assertTrue(self.wait_for(
-            lambda: (self.find("count_text") or {}).get("props", {})
-            .get("value") == "Count: 1"), "server never resynchronised")
-        # The stale patch was refused, so recovery came as a snapshot whose
-        # revision honours the 99 we reported in the NACK.
-        self.assertGreaterEqual(self.tree.revision, 100)
-        self.client.disconnect()
-
-    def test_metrics_event_triggers_rerender(self):
-        self.client.connect(metrics=METRICS)
-        self.assertTrue(self.wait_for(lambda: not self.tree.is_empty))
-        before = len(self.transactions)
-        self.assertTrue(self.client.send_metrics({"width": 700,
-                                                  "height": 900,
-                                                  "density": 2.0}))
-        self.assertTrue(self.wait_for(
-            lambda: len(self.transactions) > before),
-            "metrics event did not trigger a re-render")
-        self.client.disconnect()
-
-    def test_back_event_answers_back_result(self):
-        self.client.connect(metrics=METRICS)
-        self.assertTrue(self.wait_for(lambda: not self.tree.is_empty))
-        self.assertTrue(self.client.send_back())
-        self.assertTrue(self.wait_for(lambda: any(
-            c.get("cmd") == "back_result" for c in self.commands)))
-        result = [c for c in self.commands
-                  if c.get("cmd") == "back_result"][-1]
-        self.assertIsNotNone(result.get("handled"))
-        self.client.disconnect()
+def _endpoint(port):
+    return Endpoint(host="127.0.0.1", port=port, session_id="sess-1",
+                    token="tok", project_id="proj", project_name="Demo App")
 
 
-class TestPageCommands(PreviewProtocolCase):
-    def test_project_toast_reaches_the_client(self):
-        self.client.connect(metrics=METRICS)
-        self.assertTrue(self.wait_for(lambda: not self.tree.is_empty))
-        self.assertTrue(self.client.send_event("click", "toast", {}))
-        self.assertTrue(self.wait_for(lambda: bool(self.toasts)))
-        self.client.disconnect()
-
-    def test_project_dialog_uses_service_bridge(self):
-        self.client.connect(metrics=METRICS)
-        self.assertTrue(self.wait_for(lambda: not self.tree.is_empty))
-
-        answered = threading.Event()
-
-        def on_command(message):
-            self.commands.append(message)
-            if message.get("cmd") == "dialog" and "request_id" in message:
-                # Answer exactly once, like the device would.
-                self.client.send_result(
-                    message["request_id"], ok=True, value=True)
-                answered.set()
-
-        self.client._on_command = on_command
-        self.assertTrue(self.client.send_event("click", "ask", {}))
-        self.assertTrue(self.wait_for(lambda: answered.is_set()
-                                      and self.dialogs),
-                        "dialog result never resolved on the project side")
-        self.assertEqual(self.dialogs, [True])
-        self.client.disconnect()
-
-    def test_theme_command_is_forwarded(self):
-        self.client.connect(metrics=METRICS)
-        self.assertTrue(self.wait_for(
-            lambda: any(c.get("cmd") == "theme" for c in self.commands)))
-        theme = [c for c in self.commands if c.get("cmd") == "theme"][-1]
-        self.assertIn("primary", theme)
-        self.client.disconnect()
-
-
-class TestPreviewSession(PreviewProtocolCase):
-    """The full session stack — :class:`PreviewSession` over the client.
-
-    Regression test for the crash where ``PreviewSession`` handed the
-    client an ``on_command`` callback it never defined: every connect
-    attempt died with ``'PreviewSession' object has no
-    '_on_remote_command'`` and the preview screen showed "Preview
-    unavailable".
-    """
+class TestPreviewClient(unittest.TestCase):
+    def setUp(self):
+        self.server = FakeDevServer().start()
+        self.addCleanup(self.server.stop)
+        self.tree = RemoteTree()
+        self.client = None
 
     def tearDown(self):
-        # Drop the session before the harness server and its App stop.
-        pysession = getattr(self, "pysession", None)
-        if pysession is not None:
-            try:
-                pysession.disconnect("test teardown")
-            except Exception:
-                pass
-        super().tearDown()
+        if self.client is not None:
+            self.client.disconnect()
 
-    def test_session_connects_and_routes_page_commands(self):
-        from app.preview import renderer
-        from app.preview.models import ConnectionState
-        from app.preview.session import PreviewSession
+    def _connect(self, **kwargs):
+        self.client = PreviewClient(_endpoint(self.server.port), self.tree,
+                                    **kwargs)
+        return self.client.connect(metrics={"width": 400, "height": 800})
 
-        # In production, page commands go to *Pydash's* page (the native
-        # bridge). In this test the only App in process is the previewed
-        # one, and forwarding its theme push back to itself would loop the
-        # socket — so neutralise the page and just watch the routing.
-        routed: list = []
-        real_handler = renderer.handle_remote_command
+    def test_handshake_returns_the_server_info(self):
+        info = self._connect()
+        self.assertEqual(info.project_name, "Demo App")
+        self.assertEqual(info.project_id, "proj")
+        self.assertEqual(info.session_id, "sess-1")
 
-        def spy(message):
-            routed.append(dict(message))
-            real_handler(message)
+    def test_the_hello_frame_is_authenticated(self):
+        self._connect()
+        self.assertTrue(self.server.wait_for(
+            lambda msgs: any(m.get("type") == "preview_hello" for m in msgs)))
+        hello = self.server.of_type("preview_hello")[0]
+        self.assertEqual(hello["protocol"], PREVIEW_PROTOCOL)
+        self.assertEqual(hello["session_id"], "sess-1")
+        self.assertEqual(hello["token"], "tok")
+        self.assertTrue(hello["capabilities"]["ack_nack"])
 
-        with mock.patch.object(renderer, "handle_remote_command", spy), \
-                mock.patch.object(renderer, "_page", return_value=None):
-            self.pysession = PreviewSession()
-            self.pysession.connect(self.endpoint())
+    def test_the_ready_frame_carries_capabilities_and_metrics(self):
+        self._connect()
+        self.assertTrue(self.server.wait_for(
+            lambda msgs: any(m.get("type") == "ready" for m in msgs)))
+        ready = self.server.of_type("ready")[0]
+        self.assertEqual(ready["data"]["width"], 400)
+        self.assertIn("capabilities", ready["data"])
 
-            self.assertTrue(self.wait_for(
-                lambda: self.pysession.state == ConnectionState.CONNECTED),
-                f"session never connected: "
-                f"{self.pysession.describe_error()!r}")
-            self.assertIsNone(self.pysession.error)
-            self.assertEqual(self.pysession.project_name, "Counter Project")
+    def test_a_snapshot_is_applied_and_acked(self):
+        self._connect()
+        self.server.send(_snapshot(1, _tree()))
+        self.assertTrue(self.server.wait_for(
+            lambda msgs: any(m.get("type") == "render_ack" for m in msgs)))
+        self.assertEqual(self.tree.revision, 1)
+        self.assertEqual(self.tree.snapshot_json()["key"], "root")
 
-            # The first snapshot lands in the mirror…
-            self.assertTrue(self.wait_for(
-                lambda: not self.pysession.tree.is_empty))
+    def test_a_stale_patch_is_nacked(self):
+        self._connect()
+        self.server.send(_snapshot(1, _tree()))
+        self.assertTrue(self.server.wait_for(
+            lambda msgs: any(m.get("type") == "render_ack" for m in msgs)))
+        self.server.send(_patch(2, 7, [{"op": "delete", "key": "hello",
+                                        "parent_key": "root"}]))
+        self.assertTrue(self.server.wait_for(
+            lambda msgs: any(m.get("type") == "render_nack" for m in msgs)))
+        nack = self.server.of_type("render_nack")[0]
+        self.assertEqual(nack["data"]["code"], "stale_base")
+        self.assertEqual(nack["data"]["native_revision"], 1)
 
-            # …and the server's theme push reaches the renderer layer —
-            # this is the callback that used to be missing.
-            self.assertTrue(self.wait_for(
-                lambda: any(m.get("cmd") == "theme" for m in routed)),
-                "page commands never reached the renderer")
+    def test_events_are_forwarded_to_the_server(self):
+        self._connect()
+        self.client.send_event("btn", "click", {"x": 1})
+        self.client.send_back()
+        self.client.send_metrics({"width": 411, "height": 731})
+        self.assertTrue(self.server.wait_for(
+            lambda msgs: any(m.get("type") == "back" for m in msgs)
+            and any(m.get("type") == "metrics" for m in msgs)))
+        click = self.server.of_type("click")[0]
+        self.assertEqual(click["key"], "btn")
+        self.assertEqual(click["data"]["value"], {"x": 1})
 
-    def test_session_reports_handshake_rejection(self):
-        from app.preview.models import ConnectionState
-        from app.preview.session import PreviewSession
+    def test_a_rejection_raises_a_handshake_error(self):
+        self.server.stop()
+        self.server = FakeDevServer(reject={
+            "type": "preview_reject", "code": "bad_token",
+            "message": "the one-run key is wrong",
+        }).start()
+        self.addCleanup(self.server.stop)
+        self.client = PreviewClient(_endpoint(self.server.port), self.tree)
+        with self.assertRaises(PreviewHandshakeError) as ctx:
+            self.client.connect()
+        self.assertEqual(ctx.exception.code, "bad_token")
 
-        self.pysession = PreviewSession()
-        self.pysession.connect(self.endpoint(token="wrong-token"))
-        self.assertTrue(self.wait_for(
-            lambda: self.pysession.state == ConnectionState.FAILED))
-        self.assertEqual(self.pysession.error_code, "authentication_failed")
+    def test_a_protocol_version_mismatch_raises(self):
+        self.server.stop()
+        self.server = FakeDevServer(
+            welcome_overrides={"protocol_version": 99}).start()
+        self.addCleanup(self.server.stop)
+        self.client = PreviewClient(_endpoint(self.server.port), self.tree)
+        with self.assertRaises(PreviewHandshakeError) as ctx:
+            self.client.connect()
+        self.assertEqual(ctx.exception.code, "unsupported_version")
+
+
+class TestPreviewSession(unittest.TestCase):
+    def setUp(self):
+        self.server = FakeDevServer().start()
+        self.addCleanup(self.server.stop)
+        self.session = PreviewSession()
+        self.addCleanup(self.session.disconnect)
+
+    def _wait_state(self, state, timeout=3.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.session.state == state:
+                return True
+            time.sleep(0.01)
+        return False
+
+    def test_a_session_connects_and_renders_the_project(self):
+        self.session.connect(_endpoint(self.server.port))
+        self.assertTrue(self.server.wait_for(
+            lambda msgs: any(m.get("type") == "ready" for m in msgs)))
+        self.assertTrue(self._wait_state(ConnectionState.CONNECTED))
+        self.assertTrue(self.session.is_live)
+
+        self.server.send(_snapshot(1, _tree()))
+        self.assertTrue(self.server.wait_for(
+            lambda msgs: any(m.get("type") == "render_ack" for m in msgs)))
+        self.assertEqual(self.session.project_name, "Demo App")
+        self.assertEqual(self.session.stats.snapshots, 1)
+
+    def test_a_session_disconnects_cleanly(self):
+        self.session.connect(_endpoint(self.server.port))
+        self.assertTrue(self._wait_state(ConnectionState.CONNECTED))
+        self.session.disconnect()
+        self.assertEqual(self.session.state, ConnectionState.DISCONNECTED)
+        self.assertFalse(self.session.is_live)
+        self.assertTrue(self.session.tree.is_empty)
+
+    def test_a_refused_connection_fails_with_a_friendly_message(self):
+        # Nothing is listening on this port.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+        dead_port = probe.getsockname()[1]
+        probe.close()
+
+        self.session.connect(_endpoint(dead_port))
+        self.assertTrue(self._wait_state(ConnectionState.FAILED))
+        self.assertIn("refused", self.session.describe_error().lower())
 
 
 if __name__ == "__main__":

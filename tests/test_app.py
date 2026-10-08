@@ -1,229 +1,211 @@
-"""Tests for the Pydash app: shell, screens, navigation and interactions.
+"""End-to-end tests for Pydash.
 
-``AppTester`` boots the whole app (routes, tab shell, preview flow)
-against a fake device, so these run anywhere — no emulator, no Gradle.
-Run them with ``pydrud test`` or ``pytest``.
+``AppTester`` boots the app against a protocol reference renderer, so these run
+without an emulator or a platform build toolchain. They cover the shell and its
+two tabs, the theme switch, the scan flow's validation and the deep-link path
+into a live session.
 """
 
-import copy
 import os
 import sys
 import time
 import unittest
 
-sys.path.insert(0, os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_ROOT, "src"))
 
-from pydrud import Colors  # noqa: E402
+from pydrud import App  # noqa: E402
 from pydrud.testing import AppTester  # noqa: E402
 
-from app.main import create_app  # noqa: E402
+from app import state  # noqa: E402
+from app.main import main  # noqa: E402
+from app.preview import session  # noqa: E402
 from app.preview.models import ConnectionState  # noqa: E402
-from app.preview.session import session  # noqa: E402
-from app.runtime import refresh, router  # noqa: E402
-from app.state import active_tab  # noqa: E402
+from app.preview.uri import build_uri  # noqa: E402
+from app.runtime import bind, router  # noqa: E402
+from app.screens.scan import manual_text, scan_error  # noqa: E402
 
-#: A miniature remote project: its own Scaffold with a text on it, as
-#: ``pydrud dev`` would serialise it.
-REMOTE_SNAPSHOT = {
-    "type": "Scaffold",
-    "key": "remote_root",
-    "style": {"width": "match", "height": "match"},
-    "props": {},
-    "children": [
-        {"type": "Text", "key": "remote_greeting", "style": {},
-         "props": {"value": "Hello from dev"}, "children": []},
-    ],
-}
+_STYLESHEET = os.path.join(_ROOT, "src", "app", "theme.pss")
+
+
+def _valid_uri(host="127.0.0.1", port=1):
+    return build_uri(host=host, port=port, session_id="sess-1",
+                     token="tok", project_id="proj", project_name="Demo App")
 
 
 class TestApp(unittest.TestCase):
     def setUp(self):
-        active_tab.value = 0
+        session.disconnect()
+        session.endpoint = None
+        session.server = None
         session.state = ConnectionState.IDLE
-        session.tree.reset()
-        self.app = AppTester(app=create_app()).start()
+        state.active_tab.value = 0
+        state.theme_mode.value = "system"
+        state.auto_reconnect.value = True
+        state.haptics_enabled.value = True
+        state.keep_awake.value = False
+        state.connecting.value = False
+        state.connecting_endpoint.value = None
+        state.connecting_origin.value = ""
+        state.connection_failed.value = None
+        state.recents.value = []
+        session.dropped = False
+        manual_text.value = ""
+        scan_error.value = ""
+        router.reset()
+
+        app = App(target=main, title="Pydash", dev_server=False,
+                  stylesheet=_STYLESHEET)
+        app.attach_router(router)
+        bind(app)
+        self.app = AppTester(app=app).start()
 
     def tearDown(self):
+        session.disconnect()
         self.app.stop()
 
-    # ── shell & tabs ─────────────────────────────────────────────────────
-
-    def test_home_dashboard_renders(self):
-        self.assertTrue(self.app.shows("Scan QR code"))
-        self.assertTrue(self.app.shows("HOW IT WORKS"))
-        self.assertTrue(self.app.shows("Connect manually"))
-
-    def test_tabs_switch_content(self):
-        self.app.toggle("pd_shell_nav", 1)
-        self.assertTrue(self.app.shows("APPEARANCE"))
-        self.app.toggle("pd_shell_nav", 0)
-        self.assertTrue(self.app.shows("Scan QR code"))
-
-    def test_app_bar_status_dot_red_when_not_connected(self):
-        node = self.app.node("pd_shell_status_dot")
-        self.assertIsNotNone(node)
-        self.assertEqual(node.style.get("bg"), Colors.ERROR)
-        self.assertIsNone(self.app.node("pd_shell_status_label"))
-
-    def test_app_bar_status_dot_green_when_connected(self):
-        session.state = ConnectionState.CONNECTED
-        try:
-            refresh()
-            self.app.device.wait_for(
-                lambda d: (d.find_key("pd_shell_status_dot") or {}).get(
-                    "style", {}).get("bg") == Colors.SUCCESS
-            )
-            node = self.app.node("pd_shell_status_dot")
-            self.assertIsNotNone(node)
-            self.assertEqual(node.style.get("bg"), Colors.SUCCESS)
-        finally:
-            session.state = ConnectionState.IDLE
-            refresh()
-
-    # ── connection flow screens ──────────────────────────────────────────
-
-    def test_scan_screen_shows_camera_and_manual_entry(self):
-        router.push("scan")
-        self.assertTrue(self.app.shows("Connect to a dev server"))
-
-    def test_scan_manual_mode_prefills_uri_entry(self):
-        router.push("scan", mode="manual")
-        self.assertTrue(self.app.shows("PASTE THE CONNECTION URI"))
-
-    def test_scan_screen_resets_to_camera_mode_after_manual_mode(self):
-        # 1. Open manual mode
-        router.push("scan", mode="manual")
-        self.assertTrue(self.app.shows("PASTE THE CONNECTION URI"))
-
-        # 2. Go back to Home
-        router.pop()
-        self.assertTrue(self.app.shows("Scan QR code"))
-
-        # 3. Open scan screen again via "Scan QR code"
-        router.push("scan")
-        self.assertTrue(self.app.shows("Connect to a dev server"))
-        self.assertFalse(self.app.shows("PASTE THE CONNECTION URI"))
-
-    def test_scan_screen_mode_toggle_switches_between_camera_and_manual(self):
-        router.push("scan")
-        self.assertFalse(self.app.shows("PASTE THE CONNECTION URI"))
-
-        # Switch to manual using toggle
-        self.app.toggle("pd_scan_mode_toggle", 1)
-        self.assertTrue(self.app.shows("PASTE THE CONNECTION URI"))
-
-        # Switch back to camera using toggle
-        self.app.toggle("pd_scan_mode_toggle", 0)
-        self.assertFalse(self.app.shows("PASTE THE CONNECTION URI"))
-
-        # Switch to manual using manual link
-        self.app.tap("pd_scan_manual_link")
-        self.assertTrue(self.app.shows("PASTE THE CONNECTION URI"))
-
-        # Switch back to camera using switch camera button
-        self.app.tap("pd_scan_switch_camera")
-        self.assertFalse(self.app.shows("PASTE THE CONNECTION URI"))
-
-    def test_home_scan_and_manual_buttons_navigate_to_correct_modes(self):
-        # Tap 'Connect manually' on home
-        self.app.tap("pd_home_manual")
-        self.assertTrue(self.app.shows("PASTE THE CONNECTION URI"))
-
-        # Go back
-        self.app.tap("pd_scan_back")
-        self.assertTrue(self.app.shows("Scan QR code"))
-
-        # Tap 'Scan QR code' on home
-        self.app.tap("pd_home_scan")
-        self.assertTrue(self.app.shows("Connect to a dev server"))
-        self.assertFalse(self.app.shows("PASTE THE CONNECTION URI"))
-
-    def test_preview_screen_explains_idle_state(self):
-        router.push("preview")
-        self.assertTrue(self.app.shows("No live session"))
-        self.assertIsNotNone(self.app.node("pd_preview_bar"))
-
-    def test_preview_is_immersive_once_the_snapshot_arrives(self):
-        session.tree.apply(revision=1, base_revision=0, kind="snapshot",
-                           payload={"tree": copy.deepcopy(REMOTE_SNAPSHOT)})
-        session.state = ConnectionState.CONNECTED
-        try:
-            router.push("preview")
-            self.assertTrue(self.app.shows("Hello from dev"))
-            # The remote project renders…
-            self.assertIsNotNone(self.app.node("pd_preview_host"))
-            self.assertIsNotNone(self.app.node("remote_root"))
-            # …and owns the whole screen: none of Pydash's own chrome
-            # (top bar, footer) is showing while it does.
-            self.assertIsNone(self.app.node("pd_preview_bar"))
-            self.assertIsNone(self.app.node("pd_preview_bar_row"))
-            self.assertIsNone(self.app.node("pd_preview_footer"))
-        finally:
-            session.tree.reset()
-            session.state = ConnectionState.IDLE
-            router.reset("shell")
-            refresh()
-
-    def test_preview_keeps_chrome_while_waiting_for_first_snapshot(self):
-        session.state = ConnectionState.CONNECTED
-        try:
-            router.push("preview")
-            self.assertTrue(self.app.device.wait_for(
-                lambda d: d.root is not None
-                and d.root.find("pd_preview_bar") is not None))
-            self.assertIsNotNone(self.app.node("pd_preview_bar"))
-            self.assertIsNone(self.app.node("pd_preview_host"))
-        finally:
-            session.state = ConnectionState.IDLE
-            router.reset("shell")
-            refresh()
-
-    def test_second_back_press_exits_when_project_never_answers(self):
-        from app.preview import renderer
-
-        session.tree.apply(revision=1, base_revision=0, kind="snapshot",
-                           payload={"tree": copy.deepcopy(REMOTE_SNAPSHOT)})
-        session.state = ConnectionState.CONNECTED
-
-        class StubClient:
-            is_connected = True
-
-            def send_back(self):
+    def _wait(self, predicate, timeout=2.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if predicate():
                 return True
+            time.sleep(0.01)
+        return False
 
-            def disconnect(self, reason=None):
-                pass
+    # ── shell ─────────────────────────────────────────────────────────────
 
-        session.client = StubClient()
-        try:
-            router.push("preview")
-            self.assertTrue(self.app.device.wait_for(
-                lambda d: d.root is not None
-                and d.root.find("pd_preview_host") is not None))
-            # A back offer sent long ago that the project never answered
-            # (paused debugger, hung handler) must not trap the user.
-            renderer._back_offered_at = time.time() - 5
-            renderer.handle_back()
-            self.assertEqual(router.current_route, "shell")
-        finally:
-            session.client = None
-            renderer._back_offered_at = None
-            session.tree.reset()
-            session.state = ConnectionState.IDLE
-            router.reset("shell")
-            refresh()
+    def test_home_is_the_default_screen(self):
+        self.assertTrue(self.app.shows("Pydash"))
+        self.assertTrue(self.app.shows("Scan QR code"))
+        self.assertTrue(self.app.shows("Enter connection URL"))
+        self.assertTrue(self.app.shows("How it works"))
+        for key in ("pd_shell._body", "pd_hero", "pd_nav", "pd_home",
+                    "pd_bar_scan"):
+            with self.subTest(key=key):
+                self.assertTrue(self.app.exists(key))
 
-    def test_settings_screen_lists_protocol_info(self):
-        self.app.toggle("pd_shell_nav", 1)
-        self.assertTrue(self.app.shows("RUNTIME & PROTOCOL"))
-        self.assertTrue(self.app.shows("Preview protocol"))
+    def test_the_bottom_navigation_switches_to_settings(self):
+        self.app.device.change("pd_nav", 1)
+        self.app.settle()
+        self.assertEqual(state.active_tab.value, 1)
+        self.assertTrue(self.app.shows("Appearance"))
+        self.assertTrue(self.app.shows("About"))
+        self.assertTrue(self.app.shows("Theme mode"))
 
-    # ── deep links ───────────────────────────────────────────────────────
+        self.app.device.change("pd_nav", 0)
+        self.app.settle()
+        self.assertEqual(state.active_tab.value, 0)
+        self.assertTrue(self.app.shows("Scan QR code"))
 
-    def test_unknown_deep_link_shows_not_found(self):
-        router.go("/definitely/not/a/route")
-        self.assertTrue(self.app.shows("Nothing here"))
+    def test_the_stylesheet_styles_the_screen(self):
+        from pydrud.core.styles.parser import parse_pss
+
+        with open(_STYLESHEET, encoding="utf-8") as handle:
+            sheet = parse_pss(handle.read(), filename="theme.pss")
+        self.assertFalse([d for d in sheet.diagnostics if d.kind == "error"])
+        self.assertGreater(len(sheet.rules), 10)
+
+        hero = self.app.node("pd_hero")
+        self.assertIsNotNone(hero)
+        self.assertIn("gradient", hero.style)
+        self.assertEqual(self.app.node("pd_hero_title").style["font"]["size"],
+                         22)
+
+    # ── theme ─────────────────────────────────────────────────────────────
+
+    def test_the_theme_switch_updates_the_mode(self):
+        self.app.device.change("pd_nav", 1)
+        self.app.settle()
+
+        self.app.device.change("pd_theme_segmented", 2)
+        self.app.settle()
+        self.assertEqual(state.theme_mode.value, "dark")
+
+        self.app.device.change("pd_theme_segmented", 1)
+        self.app.settle()
+        self.assertEqual(state.theme_mode.value, "light")
+
+    def test_behaviour_switches_flip_their_state(self):
+        self.app.device.change("pd_nav", 1)
+        self.app.settle()
+
+        self.assertTrue(state.haptics_enabled.value)
+        self.app.device.change("pd_control_haptics", False)
+        self.app.settle()
+        self.assertFalse(state.haptics_enabled.value)
+
+    # ── scanning & manual entry ───────────────────────────────────────────
+
+    def test_manual_entry_rejects_a_bad_url(self):
+        router.push("scan", mode="manual")
+        self.app.settle()
+        self.assertTrue(self.app.shows("Connection URL"))
+
+        self.app.type_in("pd_manual_field", "not a preview url")
+        self.app.tap("Connect")
+        self.assertTrue(self.app.shows("That code didn't work"))
+        self.assertIsNone(session.endpoint)
+
+    def test_manual_entry_accepts_a_valid_url(self):
+        router.push("scan", mode="manual")
+        self.app.settle()
+
+        self.app.type_in("pd_manual_field", _valid_uri())
+        self.app.tap("Connect")
+        # The screen stays put and spins while the handshake runs, rather than
+        # dropping the user onto an empty preview stage.
+        self.assertTrue(self.app.exists("pd_scan_connecting"))
+        self.assertEqual(router.current_route, "scan")
+        self.assertIsNotNone(session.endpoint)
+        self.assertEqual(session.endpoint.host, "127.0.0.1")
+
+        # Nothing is listening on port 1, so the attempt fails and the app
+        # asks the user what to do instead of hanging on the spinner.
+        self.assertTrue(self._wait(
+            lambda: self.app.exists("pd_not_responding"), timeout=8.0))
+        self.assertEqual(router.current_route, "scan")
+
+    def test_the_not_responding_dialog_goes_home(self):
+        router.push("scan", mode="manual")
+        self.app.settle()
+        self.app.type_in("pd_manual_field", _valid_uri())
+        self.app.tap("Connect")
+        self.assertTrue(self._wait(
+            lambda: self.app.exists("pd_not_responding"), timeout=8.0))
+
+        self.app.device.send_event("click", "pd_not_responding",
+                                   {"action": "home"})
+        self.app.settle()
+        self.assertTrue(self._wait(lambda: router.current_route == "shell"))
+        self.assertIsNone(state.connection_failed.value)
+
+    def test_the_scanner_screen_offers_both_ways_in(self):
+        router.push("scan", mode="scan")
+        self.app.settle()
+        self.assertTrue(self.app.exists("pd_scanner"))
+        self.assertTrue(self.app.shows("Enter the URL manually"))
+
+        self.app.tap("Enter the URL manually")
+        self.assertTrue(self.app.shows("Connection URL"))
+
+    # ── deep links ────────────────────────────────────────────────────────
+
+    def test_a_deep_link_opens_a_session(self):
+        link = ("pydash://preview/connect?host=127.0.0.1&port=1"
+                "&session=sess-1&token=tok&project=proj&name=Demo+App")
+        router.handle_link(link)
+        self.app.settle()
+        self.assertTrue(self._wait(
+            lambda: router.current_route == "preview"
+            and session.endpoint is not None))
+        self.assertEqual(session.endpoint.host, "127.0.0.1")
+        self.assertEqual(session.endpoint.project_name, "Demo App")
+
+    def test_a_broken_deep_link_returns_home(self):
+        router.handle_link("pydash://preview/connect?host=127.0.0.1")
+        self.app.settle()
+        self.assertTrue(self._wait(lambda: router.current_route == "shell"))
+        self.assertIsNone(session.endpoint)
 
 
 if __name__ == "__main__":
