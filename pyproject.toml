@@ -1,0 +1,18 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+# Matches the Pydrud framework's gate: one place to change the lint rule set.
+target-version = "py310"
+line-length = 100
+# `src/pydrud` is the framework bundle `pydrud init` copies in for the APK;
+# it is generated, not app code, so it stays out of the lint gate.
+extend-exclude = ["build", "dist", "*.egg-info", "android", ".pydrud",
+                  "src/pydrud"]
+
+[tool.ruff.lint]
+# Errors and undefined names only — the test suite is the contract for
+# behaviour, so Ruff stays a fast syntax/static-error gate.
+select = ["F", "E9"]

@@ -1,51 +1,56 @@
 #!/usr/bin/env python3
-"""Development runner for Pydash.
+"""Local runner for Pydash.
 
-Runs the app's Python side on your computer. Without an Android device
-listening on the bridge port it starts in headless mode, which is useful
-for checking that the widget tree builds and for unit-testing screens::
+* ``python run.py``         build the widget tree on this machine (headless).
+* ``python run.py --tree``  print the full widget tree as JSON.
+* ``python run.py --tab N`` build a specific shell tab body (0 Home, 1 Settings).
 
-    python run.py            # headless (prints the widget tree summary)
-    python run.py --tree     # dump the full widget tree as JSON
-
-The tree built here is the real shell — Home dashboard and tab bar
-included — so a successful build means every screen in the app is
-constructible against the vendored SDK.
+The on-device app boots through the generated ``app.android_main`` entry point;
+this helper is for quick, device-free checks while developing.
 """
 
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.join(PROJECT_DIR, "src")
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
-from app.main import create_app  # noqa: E402
+
+def _build_page():
+    from pydrud import Column
+
+    from app.main import main
+
+    page = Column(key="root", spacing=0)
+    main(page)
+    return page
 
 
 def main() -> int:
-    app = create_app()
-
     if "--tree" in sys.argv:
-        print(app.build().to_json())
+        print(_build_page().to_json())
         return 0
 
-    tree = app.build()
-    widgets = sum(1 for _ in tree.walk())
-    print(f"[Pydash] Widget tree built: {widgets} widgets")
-
-    session_tab = "--tab" in sys.argv
-    if session_tab:
-        # Just verify every tab body constructs, then exit.
+    if "--tab" in sys.argv:
+        index = 0
+        try:
+            index = int(sys.argv[sys.argv.index("--tab") + 1])
+        except (IndexError, ValueError):
+            index = 0
+        from app import state
         from app.screens import home, settings
 
-        for name, builder in (("home", home.body),
-                              ("settings", settings.body)):
-            count = sum(1 for widget in builder() for _ in widget.walk())
-            print(f"[Pydash]   {name:<12} {count:>4} widgets")
+        state.active_tab.value = index
+        body = home.body() if index == 0 else settings.body()
+        print(body.to_json())
         return 0
 
-    app.run(max_retries=3)
+    page = _build_page()
+    print(f"built {len(page.children)} root node(s)")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
