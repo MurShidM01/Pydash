@@ -1,12 +1,27 @@
-# Pydash
+<p align="center">
+  <img src="https://img.shields.io/github/v/release/MurShidM01/Pydash?style=flat-square&color=6366F1" alt="Release" />
+  <img src="https://img.shields.io/badge/platform-Android-3DDC84?style=flat-square" alt="Platform" />
+  <img src="https://img.shields.io/badge/pydrud-2.1.1-6366F1?style=flat-square" alt="Pydrud 2.1.1" />
+  <img src="https://img.shields.io/github/license/MurShidM01/Pydash?style=flat-square" alt="License" />
+</p>
 
-**Live preview for [Pydrud](https://github.com/MurShidM01/Pydrud) apps — no APK
-rebuilds.**
+<h1 align="center">Pydash</h1>
 
-Pydash is the Expo Go of the Pydrud ecosystem. Run `pydrud dev` on your
-computer, point Pydash at the QR code it prints, and the project's UI renders
-natively on your phone over Wi-Fi. Edit Python, save, and the screen updates —
-no reinstall, no cable, no build step.
+<p align="center">
+  <strong>The live preview client for <a href="https://github.com/MurShidM01/Pydrud">Pydrud</a> apps — no APK rebuilds.</strong><br>
+  Run <code>pydrud dev</code>, point Pydash at the QR code, and the project's UI renders natively on your phone over Wi-Fi.
+</p>
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="Pydash — Home screen" width="330" />
+</p>
+
+---
+
+Pydash is the **Expo Go of the Pydrud ecosystem**. Run `pydrud dev` on your
+computer, scan the QR code it prints, and the project's UI renders natively on
+your phone over Wi-Fi. Edit Python, save, and the screen updates — no
+reinstall, no cable, no build step.
 
 Pydash is itself a Pydrud project. It targets Android through the Chaquopy
 runtime, so the preview client is a normal installable APK; the apps it
@@ -26,6 +41,11 @@ previews are not.
      ▼                                                  ▼
   Python runs here                         the UI is drawn here
 ```
+
+## Download
+
+Grab the latest APK from the [**Releases**](https://github.com/MurShidM01/Pydash/releases)
+page and install it on any device running **Android 7.0 (API 24)** or newer.
 
 ## What it does
 
@@ -81,7 +101,7 @@ To build and install the Android client:
 ```bash
 pydrud init android --backend chaquopy   # generate the Android target (once)
 pydrud sync                              # refresh generated files
-pydrud build                             # assemble the APK only
+pydrud build --release                   # assemble a release APK
 pydrud run                               # build, install, launch and hot-reload
 ```
 
@@ -126,6 +146,7 @@ Pydash/
 ├── pydrud.yaml             Android target: package, versions, permissions
 ├── pydrud.toml             Python package declarations and theme seed
 ├── pyproject.toml          lint (ruff) and pytest configuration
+├── docs/                   screenshots used in this README
 ├── assets/                 app icons and images
 ├── tests/                  the suite (uri, mirror, protocol, app)
 └── src/
@@ -173,5 +194,5 @@ python -m ruff check .
 
 ## Licence
 
-Pydash is released under the MIT licence, like the Pydrud framework it
-previews.
+Pydash is released under the MIT licence, like the
+[Pydrud](https://github.com/MurShidM01/Pydrud) framework it previews.
