@@ -1,253 +1,144 @@
-"""Preview — the live project host screen.
+"""Preview — the connected project, rendered natively inside Pydash.
 
-Once the first snapshot arrives this screen *is* the previewed app: the
-mirrored tree takes over the whole display — its own AppBar, bottom
-navigation, drawers and FABs render exactly as a standalone build would,
-and every touch, tab switch and keystroke is forwarded to the dev server.
-There is no Pydash chrome at all in that state; the system back gesture
-leaves through the project itself.
+This is the payoff screen. It does almost nothing itself: the mirrored remote
+tree is rehydrated by :func:`app.preview.renderer.build_preview_body` and drawn
+by Pydrud's own renderer, so the preview is the *real* UI — the project's own
+app bars, navigation and all — not a mock. Pydash adds only a thin bar above it
+(project identity, connection state, a way out) and hands the hardware back
+button to the remote project first.
 
-Before that (connecting, waiting for the snapshot) and after trouble
-(failed, idle), a slim client header plus quiet status surfaces explain
-what is happening and offer Retry / Scan actions.
+Entering the screen adopts the previewed project's palette so it looks the way
+it would as a real app; leaving restores Pydash's own look. The session is
+intentionally *not* torn down when the screen closes — closing returns to the
+dashboard with the connection still live, so it can be reopened without
+re-scanning. ``Exit session`` is the explicit teardown.
 """
 
 from __future__ import annotations
 
-from pydrud import (
-    Colors, Column, Container, Icon, Icons, Radius, Row, Spacing, Stack,
-    Text, Theme, Widget,
-)
+from pydrud import Column, Container, Icons, Row, Scaffold
 
-from app.components.status import StatusDot
-from app.preview.models import ConnectionState
+from app import connection, theme
+from app.components import bar_action
 from app.preview.renderer import (
-    build_preview_body, exit_preview, handle_back, handle_metrics,
-    preview_header, sync_pill,
+    build_preview_body,
+    handle_back,
+    handle_metrics,
+    preview_header,
+    release_remote_theme,
 )
 from app.preview.session import session
 from app.runtime import current, refresh, router
-from app.state import keep_awake
-from app.theme import pad
 
 __all__ = ["preview_screen"]
 
+#: Whether the window-metrics hook has been attached to the running app.
+_metrics_hooked = False
+
 
 def preview_screen(page) -> None:
-    """Build the live preview host."""
-    page.bgcolor = Theme.background
+    """Route builder: the immersive preview.
 
-    live = session.is_live or session.is_busy
-
-    page.add(Stack(
+    The previewed palette is adopted *before* this route is built (see
+    ``app.preview.renderer.adopt_remote_theme`` and its callers in
+    ``connection``, ``home`` and ``main``). Adopting it here — mid-build —
+    would nest a full re-render inside the build in progress, which cleared and
+    repopulated the page and then appended a second copy of this route's
+    widgets (``Duplicate Pydrud widget key 'pd_preview'``), blanking the
+    preview the moment it opened.
+    """
+    router.preview_back_handler = handle_back
+    _hook_metrics()
+    page.add(Scaffold(
         key="pd_preview",
-        style={"width": "match", "height": "match", "bg": Theme.background},
-        expand=1,
-        children=[
-            _content(page),
-            *([] if live else []),
-        ],
+        class_="pd-screen",
+        bg_color=theme.background(),
+        body=Column(
+            key="pd_preview_body",
+            expand=1,
+            children=[_bar(), build_preview_body()],
+        ),
     ))
-
-    router.preview_back_handler = (
-        handle_back if live else None)
-    _manage_chrome(live)
-
-
-def _content(page) -> Widget:
-    live = session.is_live or session.is_busy
-    if live and not session.tree.is_empty:
-        # Immersive mode: the previewed project owns the entire screen.
-        # Its own Scaffold, AppBar, bottom navigation, FABs — everything —
-        # renders exactly as a standalone build would, and every touch,
-        # swipe, tab switch and keystroke is forwarded to the dev server.
-        # Pydash's chrome steps aside completely; the system back gesture
-        # leaves through the project itself (see ``handle_back``).
-        return build_preview_body()
-    return Column(
-        key="pd_preview_col",
-        expand=1,
-        style={"width": "match", "height": "match"},
-        children=[
-            _client_bar(live),
-            Container(
-                key="pd_preview_stage",
-                width="match",
-                height="match",
-                expand=1,
-                bg=Theme.background if not live else Colors.BLACK,
-                child=_stage(live),
-            ),
-            *(_footer() if live else []),
-        ],
-    )
+    dialog = connection.failure_dialog()
+    if dialog is not None:
+        page.add_floating(dialog)
 
 
-def _stage(live: bool) -> Widget:
-    if not live:
-        return _summary_surface()
+# ── the bar ──────────────────────────────────────────────────────────────────
+
+
+def _bar() -> Container:
+    # The bar floats on the previewed project's own background rather than
+    # Pydash's surface colour: once the remote palette is adopted (see
+    # ``renderer.adopt_remote_theme``), ``theme.background()`` is the project's
+    # background, so the chrome blends into the mirrored app instead of
+    # framing it in a foreign colour.
     return Container(
-        key="pd_preview_stage_live",
+        key="pd_preview_bar_wrap",
         width="match",
-        height="match",
-        child=build_preview_body(),
-    )
-
-
-def _client_bar(live: bool) -> Widget:
-    title = (session.remote_title or session.project_name) if live \
-        else "Live preview"
-    return Container(
-        key="pd_preview_bar",
-        width="match",
-        bg=Theme.primary if not live else Colors.with_opacity(
-            Colors.BLACK, 0.72),
-        padding=pad(horizontal=Spacing.SM, vertical=Spacing.SM),
+        padding=theme.insets(left=16, right=8, top=6, bottom=6),
+        style={"bg": theme.background()},
         child=Row(
             key="pd_preview_bar_row",
-            spacing=Spacing.SM,
+            spacing=6,
+            main_axis_size="max",
             vertical_alignment="center",
             children=[
-                Icon(Icons.CHEVRON_LEFT, key="pd_preview_bar_back", size=20,
-                     color=Colors.WHITE if live else Theme.on_primary
-                     ).on_click(lambda _e: _leave(live)),
-                StatusDot("pd_preview_bar_dot", session.state)
-                if live else Container(key="pd_preview_bar_dot_off",
-                                       width=9, height=9,
-                                       border_radius=Radius.PILL,
-                                       bg=Theme.on_primary),
-                Text(title, key="pd_preview_bar_title", size=14, weight=700,
-                     color=Colors.WHITE if live else Theme.on_primary,
-                     expand=1, max_lines=1, overflow="ellipsis"),
-                Text(f"rev {session.stats.revision}",
-                     key="pd_preview_bar_rev", size=11, weight=600,
-                     color=Colors.with_opacity(Colors.WHITE, 0.85)
-                     if live else Theme.on_primary),
-                SizedBox_gap(),
+                Container(key="pd_preview_header_slot", expand=1,
+                          child=preview_header()),
+                bar_action(Icons.LOGOUT, "Exit session", _disconnect,
+                           key="pd_preview_exit"),
+                bar_action(Icons.CLOSE, "Close preview", _close,
+                           key="pd_preview_close"),
             ],
         ),
     )
 
 
-def SizedBox_gap() -> Widget:
-    from pydrud import SizedBox
-
-    return SizedBox(key="pd_preview_bar_gap", width=Spacing.XS)
+# ── actions ──────────────────────────────────────────────────────────────────
 
 
-def _footer() -> list:
-    return [
-        Container(
-            key="pd_preview_footer",
-            width="match",
-            bg=Colors.with_opacity(Colors.BLACK, 0.72),
-            padding=pad(horizontal=Spacing.MD, vertical=Spacing.XS + 2),
-            child=Row(
-                key="pd_preview_footer_row",
-                spacing=Spacing.SM,
-                vertical_alignment="center",
-                children=[
-                    sync_pill(),
-                    Container(key="pd_preview_footer_spacer", expand=1),
-                    Icon(Icons.LOGOUT, key="pd_preview_footer_exit",
-                         size=16,
-                         color=Colors.with_opacity(Colors.WHITE, 0.85)
-                         ).on_click(lambda _e: exit_preview()),
-                ],
-            ),
-        ),
-    ]
+def _close() -> None:
+    """Leave the preview but keep the session alive."""
+    _leave()
 
 
-def _leave(live: bool) -> None:
-    if live:
-        handle_back()
-    else:
-        exit_preview()
+def _disconnect() -> None:
+    """Close the session and return to the dashboard."""
+    session.disconnect()
+    _leave()
 
 
-def _summary_surface() -> Widget:
-    """Connecting / failed / disconnected — with context and actions."""
-    state = session.state
-    if session.is_busy:
-        return _busy_surface(state)
-    if state == ConnectionState.FAILED:
-        return _failed_surface()
-    return _idle_surface()
+def _leave() -> None:
+    """Return to the dashboard however the preview was reached.
+
+    A preview opened from a deep link or a scan *replaces* the previous screen,
+    so the router stack can hold the preview as its only entry — and ``pop()``
+    on a one-entry stack is a no-op, which is exactly how the exit and close
+    buttons appeared to "stop working". Resetting to the shell is deterministic
+    from any entry point.
+    """
+    release_remote_theme()
+    try:
+        router.reset("shell")
+    except Exception:
+        router.pop()
+    refresh()
 
 
-def _busy_surface(state: str) -> Widget:
-    from app.components.states import NoticeState
-
-    detail = {
-        ConnectionState.CONNECTING: "Reaching the development server…",
-        ConnectionState.HANDSHAKING:
-            "Checking protocol versions and credentials…",
-        ConnectionState.RECONNECTING:
-            f"Retry {session.reconnect_attempt} — the link dropped.",
-    }.get(state, "Connecting…")
-    return _dark_surface(
-        NoticeState(
-            "pd_preview_notice_busy",
-            icon=Icons.SYNC,
-            title="Connecting",
-            message=detail,
-            tone="pending",
-            progress=True,
-        ))
+# ── metrics ──────────────────────────────────────────────────────────────────
 
 
-def _failed_surface() -> Widget:
-    from app.components.states import NoticeState
-
-    return _dark_surface(
-        NoticeState(
-            "pd_preview_notice_failed",
-            icon=Icons.WARNING,
-            title="Preview unavailable",
-            message=session.describe_error()
-            or "The development server could not be reached.",
-            tone="error",
-            action="Retry",
-            on_action=lambda _event: session.reconnect(),
-        ))
-
-
-def _idle_surface() -> Widget:
-    from app.components.states import NoticeState
-
-    return _dark_surface(
-        NoticeState(
-            "pd_preview_notice_idle",
-            icon=Icons.QR_CODE,
-            title="No live session",
-            message="Scan the QR code printed by `pydrud dev` to start "
-                    "previewing a project here.",
-            tone="idle",
-            action="Scan now",
-            on_action=lambda _event: router.push("scan", mode="scan"),
-        ))
-
-
-def _dark_surface(child: Widget) -> Widget:
-    return Container(
-        key="pd_preview_dim",
-        width="match",
-        height="match",
-        bg=Theme.background,
-        alignment="center",
-        padding=Spacing.XL,
-        child=child,
-    )
-
-
-def _manage_chrome(live: bool) -> None:
-    """Keep-awake and system bars follow the session, not the screen."""
-    app = current()
-    page = app.page if app is not None else None
-    if page is None:
+def _hook_metrics() -> None:
+    """Tell the dev server when the window changes (rotation, keyboard)."""
+    global _metrics_hooked
+    if _metrics_hooked:
         return
-    if live and keep_awake.value:
-        page.keep_awake(True)
-    elif not live and keep_awake.value:
-        page.keep_awake(False)
+    app = current()
+    if app is None:
+        return
+    try:
+        app.on_metrics_change(lambda _info: handle_metrics())
+        _metrics_hooked = True
+    except Exception:
+        pass

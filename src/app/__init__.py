@@ -1,21 +1,19 @@
-"""Pydash — application package.
+"""Pydash — the live-preview client for Pydrud.
 
-Pydash is the live-preview companion app for Pydrud: a developer runs
-``pydrud dev`` on their machine, scans the QR code from Pydash, and the
-project's UI renders natively inside Pydash with incremental updates —
-no APK rebuilds.
+An Expo-Go-style Android app: run ``pydrud dev`` on your computer, scan the QR
+code (or paste the connection URL), and the project's UI renders natively
+inside Pydash over Wi-Fi — no APK rebuilds.
 
 Layout:
 
-* ``config``     — identity, versions and wire-protocol constants
-* ``state``      — the shared :class:`~pydrud.State` objects
-* ``runtime``    — the router, the running app and UI-thread scheduling
-* ``theme``      — the Pydash design system on top of Pydrud's Theme
+* ``config``   — identity, versions, wire-protocol and design constants
+* ``theme``    — the palette, generated from one brand colour (+ ``theme.pss``)
+* ``state``    — the shared :class:`~pydrud.State` objects
+* ``runtime``  — the router and the running app (``refresh()`` lives here)
+* ``preview``  — the client side of ``pydrud dev`` (protocol, mirror, session)
 * ``components`` — reusable UI building blocks shared by screens
-* ``preview``    — the live-preview client (protocol, session, renderer)
-* ``screens``    — one module per screen family
-* ``jobs``       — background work run by WorkManager
+* ``screens``    — one module per screen
 * ``main``       — route registration and the start-up entry point
 """
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"

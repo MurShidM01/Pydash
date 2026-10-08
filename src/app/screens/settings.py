@@ -1,236 +1,307 @@
-"""Settings — appearance, connection behaviour, protocol info and About."""
+"""Settings — control Pydash and read what it is made of.
+
+Three groups:
+
+* **Appearance** — the light / dark / system switch, applied live through
+  :func:`app.theme.apply_theme_mode`;
+* **Behaviour** — auto-reconnect, haptics and keep-awake, each mirrored into
+  the reactive state the rest of the app reads;
+* **About** — versions and protocol numbers, plus the device facts
+  (manufacturer, model, Android SDK) fetched once from the native layer.
+
+Every choice is written through :mod:`app.prefs`, so the app opens the way it
+was left.
+"""
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydrud import (
-    Button, Card, Column, Container, Divider, Icon, Icons, ListTile, Radius,
-    Row, SegmentedButton, Spacing, Switch, Text, Theme, Widget,
+    Column,
+    Container,
+    Icons,
+    ListTile,
+    SegmentedButton,
+    State,
+    SwitchListTile,
+    Text,
 )
 
-from app.components import CodeChip, MetaList, MetaRow, section
+from app import prefs, state, theme
+from app.components import card, meta_list, section_header
 from app.config import (
-    APP_NAME, APP_TAGLINE, APP_VERSION, CLIENT_NAME, PYDASH_REPO,
-    PYDRUD_REPO, PYDRUD_VERSION, PREVIEW_PROTOCOL_VERSION,
+    APP_NAME,
+    APP_VERSION,
+    PACKAGE,
+    PREVIEW_PROTOCOL_VERSION,
+    PYDRUD_DOCS,
+    PYDRUD_REPO,
+    PYDRUD_VERSION,
     RENDERER_PROTOCOL_VERSION,
 )
-from app.preview.session import session
 from app.runtime import current, refresh
-from app.state import auto_reconnect, brand_seed, haptics_enabled, keep_awake
-from app.state import theme_mode
-from app.theme import status_color
 
 __all__ = ["body"]
 
+_MODES = ("system", "light", "dark")
+_MODE_LABELS = ("System", "Light", "Dark")
+_MODE_ICONS = (Icons.SYNC, Icons.LIGHT_MODE, Icons.DARK_MODE)
 
-def body() -> list:
-    return [
-        _appearance_card(),
-        _connection_card(),
-        _protocol_card(),
-        _about_card(),
-    ]
+#: Device facts from the native layer (``None`` until the first read resolves).
+device_info = State(None, name="pd_device_info")
+_device_loaded = False
 
 
-# ── appearance ──────────────────────────────────────────────────────────────
-
-def _appearance_card() -> Widget:
-    from app.config import ACCENT
-
-    mode = theme_mode.value
-    return Card(
-        key="pd_set_appearance",
-        padding=Spacing.LG,
-        child=Column(
-            key="pd_set_appearance_col",
-            spacing=Spacing.MD,
-            children=[
-                section("Appearance", "pd_set_appearance_sec"),
-                SegmentedButton(
-                    ["System", "Light", "Dark"],
-                    key="pd_set_mode",
-                    selected={"system": 0, "light": 1, "dark": 2}.get(mode, 0),
-                ).on_change(_set_mode),
-                Text("Pydash follows the system theme by default; a "
-                     "previewed project may restyle the client while its "
-                     "session is live.",
-                     key="pd_set_mode_note", size=12,
-                     color=Theme.text_secondary),
-            ],
-        ),
+def body() -> Column:
+    """The scrollable Settings tab body."""
+    return Column(
+        key="pd_settings",
+        class_="pd-screen",
+        scroll=True,
+        spacing=18,
+        style={"padding": theme.page_insets(top=16, bottom=28)},
+        children=[
+            _appearance(),
+            _behaviour(),
+            _about(),
+            _links(),
+            _footer(),
+        ],
     )
 
 
-def _set_mode(event) -> None:
+# ── appearance ───────────────────────────────────────────────────────────────
+
+
+def _appearance() -> Column:
+    return Column(key="pd_appearance", spacing=10, children=[
+        section_header("Appearance", caption="THEME",
+                       key="pd_appearance_section"),
+        card(key="pd_appearance_card", spacing=12, child=[
+            Text("Theme mode", key="pd_theme_title", class_="pd-meta-val"),
+            SegmentedButton(
+                list(_MODE_LABELS),
+                selected=_mode_index(),
+                icons=list(_MODE_ICONS),
+                on_change=_on_theme_change,
+                key="pd_theme_segmented",
+            ),
+            Text(
+                "Pydash follows the system by default. A connected project may "
+                "re-theme the app while it is on screen; Pydash restores its "
+                "own palette when the session ends.",
+                key="pd_theme_hint", class_="pd-body",
+            ),
+        ]),
+    ])
+
+
+def _mode_index() -> int:
     try:
-        index = int(event.get("value", 0))
+        return _MODES.index(str(state.theme_mode.value))
+    except ValueError:
+        return 0
+
+
+def _on_theme_change(event) -> None:
+    try:
+        index = int(event.value)
     except (TypeError, ValueError):
-        return
-    mode = ("system", "light", "dark")[max(0, min(index, 2))]
-    theme_mode.value = mode
+        index = 0
+    if not 0 <= index < len(_MODES):
+        index = 0
+    mode = _MODES[index]
+    state.theme_mode.value = mode
     page = _page()
     if page is not None:
-        page.set_theme_mode(mode)
+        theme.apply_theme_mode(page, mode)
+    prefs.save(theme_mode=mode)
     refresh()
 
 
-# ── connection ──────────────────────────────────────────────────────────────
-
-def _connection_card() -> Widget:
-    return Card(
-        key="pd_set_connection",
-        padding=Spacing.LG,
-        child=Column(
-            key="pd_set_connection_col",
-            spacing=Spacing.MD,
-            children=[
-                section("Connection", "pd_set_connection_sec"),
-                Switch("Auto-reconnect when the link drops",
-                       key="pd_set_reconnect", active=auto_reconnect.value
-                       ).on_change(_toggle_reconnect),
-                Switch("Haptic ticks on connection events",
-                       key="pd_set_haptics", active=haptics_enabled.value
-                       ).on_change(_toggle_haptics),
-                Switch("Keep the screen awake while previewing",
-                       key="pd_set_awake", active=keep_awake.value
-                       ).on_change(_toggle_awake),
-                Divider(key="pd_set_conn_div"),
-                ListTile("End the preview session",
-                         key="pd_set_disconnect",
-                         subtitle="Closes the socket and restores Pydash's "
-                                  "own theme",
-                         leading=Icons.LOGOUT,
-                         enabled=session.is_live or session.is_busy,
-                         on_click=lambda _e: _disconnect()),
-            ],
-        ),
-    )
+# ── behaviour ────────────────────────────────────────────────────────────────
 
 
-def _toggle_reconnect(event) -> None:
-    auto_reconnect.value = bool(event.get("value", True))
+def _behaviour() -> Column:
+    return Column(key="pd_behaviour", spacing=10, children=[
+        section_header("Connection & feedback", caption="BEHAVIOUR",
+                       key="pd_behaviour_section"),
+        card(key="pd_behaviour_card", spacing=0, child=[
+            SwitchListTile(
+                "Auto-reconnect", key="pd_switch_reconnect",
+                control_key="pd_control_reconnect",
+                value=bool(state.auto_reconnect.value),
+                subtitle="Retry automatically when the dev server restarts.",
+                on_change=lambda e: _set_bool(
+                    state.auto_reconnect, "auto_reconnect", e),
+            ),
+            _divider("pd_div_reconnect"),
+            SwitchListTile(
+                "Haptics", key="pd_switch_haptics",
+                control_key="pd_control_haptics",
+                value=bool(state.haptics_enabled.value),
+                subtitle="A short tick on connect, disconnect and errors.",
+                on_change=lambda e: _set_bool(
+                    state.haptics_enabled, "haptics_enabled", e),
+            ),
+            _divider("pd_div_haptics"),
+            SwitchListTile(
+                "Keep screen awake", key="pd_switch_awake",
+                control_key="pd_control_awake",
+                value=bool(state.keep_awake.value),
+                subtitle="Stop the display sleeping while a preview is "
+                         "connected.",
+                on_change=lambda e: _set_bool(
+                    state.keep_awake, "keep_awake", e),
+            ),
+        ]),
+    ])
+
+
+def _set_bool(target, name: str, event) -> None:
+    value = bool(event.value)
+    target.value = value
+    if name == "keep_awake":
+        _apply_keep_awake(value)
+    prefs.save(**{name: value})
     refresh()
 
 
-def _toggle_haptics(event) -> None:
-    haptics_enabled.value = bool(event.get("value", True))
-    refresh()
-
-
-def _toggle_awake(event) -> None:
-    keep_awake.value = bool(event.get("value", False))
+def _apply_keep_awake(enabled: bool) -> None:
     page = _page()
-    if page is not None and not session.is_live:
-        page.keep_awake(keep_awake.value)
-    refresh()
+    if page is None:
+        return
+    try:
+        page.keep_awake(bool(enabled))
+    except Exception:
+        pass
 
 
-def _disconnect() -> None:
-    session.disconnect(reason="closed from Settings")
-    refresh()
+# ── about ────────────────────────────────────────────────────────────────────
 
 
-# ── protocol info ───────────────────────────────────────────────────────────
-
-def _protocol_card() -> Widget:
-    return Card(
-        key="pd_set_protocol",
-        padding=Spacing.LG,
-        child=Column(
-            key="pd_set_protocol_col",
-            spacing=Spacing.MD,
-            children=[
-                section("Runtime & protocol", "pd_set_protocol_sec"),
-                MetaList("pd_set_protocol_meta", [
-                    MetaRow("pd_set_proto_client", "Client",
-                            f"{CLIENT_NAME} {APP_VERSION}", icon=Icons.SPARKLE),
-                    MetaRow("pd_set_proto_sdk", "Pydrud SDK",
-                            PYDRUD_VERSION, icon=Icons.PYTHON),
-                    MetaRow("pd_set_proto_preview", "Preview protocol",
-                            f"v{PREVIEW_PROTOCOL_VERSION}", icon=Icons.LINK),
-                    MetaRow("pd_set_proto_renderer", "Renderer protocol",
-                            f"v{RENDERER_PROTOCOL_VERSION}", icon=Icons.LAYERS),
-                ]),
-                Text("The handshake exchanges protocol versions and session "
-                     "credentials before the first UI snapshot is sent.",
-                     key="pd_set_protocol_note", size=12,
-                     color=Theme.text_secondary),
-                CodeChip(
-                    "pd_set_proto_uri",
-                    "pydrud://preview/connect?host=…&session=…&token=…",
-                    full=True),
-            ],
-        ),
-    )
+def _about() -> Column:
+    _load_device()
+    rows = [
+        ("Application", f"{APP_NAME} {APP_VERSION}"),
+        ("Pydrud framework", PYDRUD_VERSION),
+        ("Preview protocol", f"v{PREVIEW_PROTOCOL_VERSION}"),
+        ("Renderer protocol", f"v{RENDERER_PROTOCOL_VERSION}"),
+        ("Package", PACKAGE),
+    ]
+    children = [meta_list(rows, key="pd_about_meta")]
+    device = _device_rows()
+    if device:
+        children.append(_divider("pd_div_about"))
+        children.append(meta_list(device, key="pd_device_meta"))
+    return Column(key="pd_about", spacing=10, children=[
+        section_header("About", caption="APP INFO",
+                       key="pd_about_section"),
+        card(key="pd_about_card", spacing=14, child=children),
+    ])
 
 
-# ── about ───────────────────────────────────────────────────────────────────
+def _load_device() -> None:
+    global _device_loaded
+    if _device_loaded:
+        return
+    page = _page()
+    if page is None:
+        return
+    _device_loaded = True
+    try:
+        page.device.info().then(_on_device_info)
+    except Exception:
+        pass
 
-def _about_card() -> Widget:
-    return Card(
-        key="pd_set_about",
-        padding=Spacing.LG,
-        child=Column(
-            key="pd_set_about_col",
-            spacing=Spacing.MD,
-            children=[
-                section("About", "pd_set_about_sec"),
-                Row(
-                    key="pd_set_about_brand",
-                    spacing=Spacing.MD,
-                    vertical_alignment="center",
-                    children=[
-                        Container(
-                            key="pd_set_about_mark",
-                            width=44,
-                            height=44,
-                            border_radius=Radius.MD,
-                            bg=Theme.primary,
-                            alignment="center",
-                            child=Icon(Icons.SPARKLE,
-                                       key="pd_set_about_mark_icon", size=22,
-                                       color=Theme.on_primary),
-                        ),
-                        Column(
-                            key="pd_set_about_brand_col",
-                            spacing=2,
-                            expand=1,
-                            children=[
-                                Text(APP_NAME, key="pd_set_about_name",
-                                     size=16, weight=800, color=Theme.text),
-                                Text(APP_TAGLINE,
-                                     key="pd_set_about_tagline", size=12,
-                                     color=Theme.text_secondary),
-                            ],
-                        ),
-                    ],
-                ),
-                Divider(key="pd_set_about_div"),
-                ListTile("Pydrud on GitHub",
-                         key="pd_set_about_pydrud_repo",
-                         subtitle=PYDRUD_REPO.replace("https://", ""),
-                         leading=Icons.PYTHON,
-                         on_click=lambda _e: _open(PYDRUD_REPO)),
-                ListTile("Pydash on GitHub",
-                         key="pd_set_about_pydash_repo",
-                         subtitle=PYDASH_REPO.replace("https://", ""),
-                         leading=Icons.CODE,
-                         on_click=lambda _e: _open(PYDASH_REPO)),
-                Divider(key="pd_set_about_div2"),
-                MetaList("pd_set_about_meta", [
-                    MetaRow("pd_set_about_version", "Version", APP_VERSION),
-                    MetaRow("pd_set_about_framework", "Built with",
-                            f"Pydrud {PYDRUD_VERSION}"),
-                ]),
-            ],
-        ),
-    )
+
+def _on_device_info(value: Any) -> None:
+    if isinstance(value, dict) and value:
+        device_info.value = dict(value)
+        refresh()
+
+
+def _device_rows() -> list:
+    info = device_info.value
+    if not isinstance(info, dict) or not info:
+        return [("Device", "Reading…")]
+
+    rows: list = []
+    model = _first(info, "model", "device", "deviceModel")
+    maker = _first(info, "manufacturer", "brand", "deviceManufacturer")
+    if model:
+        label = f"{maker} {model}".strip() if maker else str(model)
+        rows.append(("Device", label))
+
+    release = _first(info, "release", "android", "os_version", "osVersion")
+    sdk = _first(info, "sdk", "sdk_int", "sdkInt", "api_level", "apiLevel")
+    if release or sdk:
+        android = str(release or "")
+        if sdk:
+            android = f"{android} (SDK {sdk})".strip()
+        rows.append(("Android", android))
+
+    locale = _first(info, "locale", "language", "country")
+    if locale:
+        rows.append(("Locale", str(locale)))
+    return rows
+
+
+def _first(info: dict, *names: str):
+    for name in names:
+        value = info.get(name)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+# ── links ────────────────────────────────────────────────────────────────────
+
+
+def _links() -> Column:
+    return Column(key="pd_links", spacing=10, children=[
+        section_header("Learn more", caption="LINKS",
+                       key="pd_links_section"),
+        card(key="pd_links_card", spacing=0, child=[
+            ListTile("Pydrud documentation", key="pd_link_docs",
+                     leading=Icons.BOOKMARK, trailing=Icons.OPEN_IN_NEW,
+                     on_click=lambda _e: _open(PYDRUD_DOCS)),
+            _divider("pd_div_docs"),
+            ListTile("Pydrud on GitHub", key="pd_link_repo",
+                     leading=Icons.CODE, trailing=Icons.OPEN_IN_NEW,
+                     on_click=lambda _e: _open(PYDRUD_REPO)),
+        ]),
+    ])
 
 
 def _open(url: str) -> None:
     page = _page()
     if page is None:
         return
-    page.invoke("open_url", url=url)
+    try:
+        page.share.open_url(url)
+    except Exception:
+        pass
+
+
+# ── bits ─────────────────────────────────────────────────────────────────────
+
+
+def _divider(key: str) -> Container:
+    return Container(key=key, class_="pd-divider", width="match")
+
+
+def _footer() -> Container:
+    return Container(
+        key="pd_settings_footer_box",
+        width="match",
+        alignment="center",
+        child=Text(
+            f"{APP_NAME} {APP_VERSION}  ·  Pydrud {PYDRUD_VERSION}",
+            key="pd_settings_footer", class_="pd-caption",
+        ),
+    )
 
 
 def _page():

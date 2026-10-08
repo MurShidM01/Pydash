@@ -1,0 +1,161 @@
+/*
+ * Pydash — the live-preview client's design system (PSS).
+ *
+ * Colours use `$token` references, which resolve against the live theme at
+ * paint time, so this one stylesheet follows the palette in `app/theme.py`
+ * in light *and* dark. Available colour tokens: $primary $secondary
+ * $background $surface $surface_variant $outline $error $text $text_secondary
+ * $on_primary. Metric tokens come from `Tokens`: $radius_card $radius_button
+ * $radius_input $radius_sheet $gutter $section $card_padding $app_bar_height
+ * $nav_height $text_title $text_body $text_caption …
+ *
+ * Screens attach these classes with `class_=`. Inline `style=` values still
+ * win where a screen needs a one-off (the brand gradient, status tints, the
+ * clamp()-driven hero type).
+ */
+
+/* ── Screen shell ────────────────────────────────────────────────────── */
+
+.pd-screen {
+    bg: $background;
+}
+
+/* Horizontal page gutter for scrollable bodies. */
+.pd-gutter {
+    padding: { left: $gutter, right: $gutter };
+}
+
+.pd-gap {
+    height: $section;
+}
+
+/* ── Surfaces ────────────────────────────────────────────────────────── */
+
+.pd-card {
+    bg: $surface;
+    border-radius: $radius_card;
+    padding: $card_padding;
+}
+
+.pd-card-tint {
+    bg: $surface_variant;
+    border-radius: $radius_card;
+    padding: $card_padding;
+}
+
+.pd-tile {
+    bg: $surface;
+    border-radius: $radius_card;
+    padding: { left: $card_padding, right: $card_padding, top: 14, bottom: 14 };
+}
+
+/* ── Brand hero ──────────────────────────────────────────────────────── */
+
+.pd-hero {
+    border-radius: 24;
+    padding: 22;
+}
+
+.pd-hero-title {
+    font: { size: 22, weight: 800, color: #FFFFFFFF, letterSpacing: -0.01 };
+}
+
+.pd-hero-sub {
+    font: { size: 13, weight: 500, color: #E6FFFFFF };
+}
+
+.pd-hero-caption {
+    font: { size: 11, weight: 800, letterSpacing: 0.14, color: #B3FFFFFF };
+}
+
+/* ── Typography ──────────────────────────────────────────────────────── */
+
+.pd-h1 {
+    font: { size: 24, weight: 800, color: $text, letterSpacing: -0.01 };
+}
+
+.pd-h2 {
+    font: { size: 18, weight: 700, color: $text };
+}
+
+.pd-body {
+    font: { size: 14, weight: 400, color: $text_secondary };
+}
+
+.pd-caption {
+    font: { size: 11, weight: 700, letterSpacing: 0.10, color: $text_secondary };
+}
+
+.pd-meta-key {
+    font: { size: 13, weight: 400, color: $text_secondary };
+}
+
+.pd-meta-val {
+    font: { size: 13, weight: 600, color: $text };
+}
+
+.pd-mono {
+    font: { family: monospace, size: 12, color: $text };
+}
+
+/* ── Pills & badges ──────────────────────────────────────────────────── */
+
+.pd-pill {
+    border-radius: 999;
+    padding: { left: 10, right: 10, top: 5, bottom: 5 };
+}
+
+.pd-pill-text {
+    font: { size: 11, weight: 800, letterSpacing: 0.06 };
+}
+
+/* ── Stats ───────────────────────────────────────────────────────────── */
+
+.pd-stat {
+    bg: $surface_variant;
+    border-radius: 14;
+    padding: 12;
+}
+
+.pd-stat-num {
+    font: { size: 18, weight: 800, color: $text };
+}
+
+.pd-stat-label {
+    font: { size: 10, weight: 700, letterSpacing: 0.08, color: $text_secondary };
+}
+
+/* ── Steps (how it works) ────────────────────────────────────────────── */
+
+.pd-step-num {
+    width: 26;
+    height: 26;
+    border-radius: 999;
+    bg: $surface_variant;
+    alignment: center;
+}
+
+.pd-step-num-text {
+    font: { size: 12, weight: 800, color: $primary };
+}
+
+/* ── Bits ────────────────────────────────────────────────────────────── */
+
+.pd-divider {
+    height: 1;
+    bg: $outline;
+}
+
+.pd-dot {
+    width: 9;
+    height: 9;
+    border-radius: 999;
+}
+
+.pd-icon-badge {
+    width: 44;
+    height: 44;
+    border-radius: 14;
+    bg: $surface_variant;
+    alignment: center;
+}

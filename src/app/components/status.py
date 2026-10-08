@@ -1,77 +1,58 @@
-"""Connection status primitives.
+"""Connection-status indicators shared by every Pydash screen.
 
-One visual language for connection state everywhere in Pydash: a coloured
-dot, a labelled pill, and a revision chip. The colours come from
-:mod:`app.theme`'s status system so dashboards, headers and preview chrome
-all agree.
+Two tiny widgets — a dot and a pill — driven by the one colour system in
+:mod:`app.theme`. Both default to the *live* preview session state, so a
+screen only has to call ``status_pill()`` and it stays in sync with whatever
+:mod:`app.preview.session` is doing.
+
+The pill is also the compact status readout the preview header shows while a
+project is rendering, so its label comes straight from the shared
+``STATE_LABELS`` vocabulary rather than being invented per screen.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from pydrud import (
-    Colors, Container, Icon, Icons, Radius, Row, Spacing, Text, Widget,
-)
+from pydrud import Container, Row, Text
 
-from app.preview.models import STATE_HINTS, STATE_LABELS, ConnectionState
-from app.theme import pad, status_color, status_surface
+from app import theme
+from app.preview.models import STATE_LABELS
+from app.preview.session import session
 
-__all__ = ["StatusDot", "StatusPill", "RevisionChip"]
+__all__ = ["status_dot", "status_pill"]
 
 
-def StatusDot(key: str, state: str, size: float = 9) -> Widget:
-    """A small circular state indicator."""
+def status_dot(state: Optional[str] = None, *, size: float = 9,
+               key: str = "pd_status_dot") -> Container:
+    """A small filled circle in the colour of *state* (default: live)."""
+    current = state or session.state
     return Container(
         key=key,
-        width=size,
-        height=size,
-        border_radius=Radius.PILL,
-        bg=status_color(state),
+        class_="pd-dot",
+        style={"width": size, "height": size, "bg": theme.status_color(current)},
     )
 
 
-def StatusPill(key: str, state: str, *, label: Optional[str] = None,
-               error: Optional[str] = None) -> Widget:
-    """The labelled status badge used on cards and headers.
-
-    For failed states the pill grows a small warning glyph — failures
-    deserve slightly more attention than a plain colour change.
-    """
-    text = label or STATE_LABELS.get(state, state)
-    failed = state == ConnectionState.FAILED
-    children = [StatusDot(key=f"{key}_dot", state=state)]
-    if failed:
-        children.append(Icon(Icons.WARNING, key=f"{key}_warn", size=13,
-                             color=status_color(state)))
-    children.append(Text(
-        text, key=f"{key}_label", size=12, weight=600,
-        color=status_color(state),
-    ))
+def status_pill(state: Optional[str] = None, *,
+                key: str = "pd_status_pill") -> Container:
+    """A tinted capsule: a status dot plus the friendly state label."""
+    current = state or session.state
+    color = theme.status_color(current)
+    label = STATE_LABELS.get(current, "Preview")
     return Container(
         key=key,
-        bg=status_surface(state),
-        border_radius=Radius.PILL,
-        padding=pad(horizontal=Spacing.MD + 2, vertical=Spacing.XS + 2),
+        class_="pd-pill",
+        style={"bg": theme.status_surface(current)},
         child=Row(
             key=f"{key}_row",
-            spacing=Spacing.XS + 2,
+            spacing=6,
+            main_axis_size="min",
             vertical_alignment="center",
-            children=children,
-        ),
-    )
-
-
-def RevisionChip(key: str, revision: int) -> Widget:
-    """Monospace revision counter shown while previewing."""
-    return Container(
-        key=key,
-        border_radius=Radius.PILL,
-        bg=Colors.with_opacity(Colors.WHITE, 0.16),
-        padding=pad(horizontal=Spacing.SM, vertical=Spacing.XS),
-        child=Text(
-            f"rev {revision}" if revision else "rev —",
-            key=f"{key}_label", size=11, weight=600, color=Colors.WHITE,
-            style={"font": {"family": "monospace"}},
+            children=[
+                status_dot(current, size=8, key=f"{key}_dot"),
+                Text(label, key=f"{key}_text", class_="pd-pill-text",
+                     style={"color": color}, max_lines=1, overflow="clip"),
+            ],
         ),
     )

@@ -1,143 +1,152 @@
-"""Pydash — application entry point and route table.
+"""Pydash — entry point.
 
-The route map:
+Registers the shell, scanner and preview routes, applies the design system and
+wires deep links so ``pydash://preview/connect?...`` opens straight into a
+session.
 
-============  ============================================  ===========================
-Route         Screen                                        Notes
-============  ============================================  ===========================
-``shell``     Tabbed root (Home · Settings)
-``scan``      QR scanner + manual entry                     pushed over the shell
-``preview``   Live preview host                             the remote project renders
-============  ============================================  ===========================
-
-Deep links work with both the app's own ``pydash://`` scheme and the
-``pydrud://preview/connect?…`` URI printed by ``pydrud dev``: the route
-``/preview/connect`` receives the QR payload's query parameters, validates
-them and starts the session straight away.
+The generated ``app.android_main`` imports this module for the theme and the
+route table, then boots the :class:`~pydrud.App` itself. :func:`start_app`
+below is the equivalent entry point for desktop runs and tests.
 """
 
 from __future__ import annotations
 
-from pydrud import App, Column, Theme
+import os
+import urllib.parse
+from typing import Optional
 
+from pydrud import App
+
+from app import theme
 from app.config import APP_NAME
-from app.preview.renderer import handle_metrics
+from app.preview.models import Endpoint
+from app.preview.session import session
+from app.preview.uri import PreviewUriError, normalise_uri, parse_preview_uri
 from app.runtime import bind, refresh, router
-from app.screens import scan, shell
 from app.screens.preview import preview_screen
-from app.theme import configure_pydash_tokens, seed_brand
+from app.screens.scan import scan_screen
+from app.screens.shell import shell_screen
 
-__all__ = ["create_app", "main", "start_app"]
+# ── design system ────────────────────────────────────────────────────────────
+# Seeding at import time means the palette is ready before the first frame —
+# the generated ``app.android_main`` relies on that.
 
+theme.seed_brand()
+theme.configure_tokens()
 
-# ── routes ──────────────────────────────────────────────────────────────────
+# ── routes ───────────────────────────────────────────────────────────────────
 
-def _register_routes() -> None:
-    router.define("shell", shell.shell_screen)
-    router.define("scan", scan.scan_screen, transition="slide_up")
-    router.define("preview", preview_screen, transition="fade")
+router.define("shell", shell_screen)
+router.define("scan", scan_screen)
+router.define("preview", preview_screen)
+router.initial("shell")
 
-    # Deep link from the `pydrud dev` QR code:
-    #   pydrud://preview/connect?host=…&port=…&session=…&token=…
-    router.define("/preview/connect", _deep_link_connect)
-    router.not_found(_not_found_screen)
-
-    router.initial("shell")
-
-
-def _deep_link_connect(page, params=None) -> None:
-    """A QR payload opened from outside the app (any scanner)."""
-    from urllib.parse import urlencode
-
-    from app.preview.models import Endpoint
-    from app.preview.session import session
-    from app.preview.uri import PreviewUriError, parse_preview_uri
-
-    params = dict(params or {})
-    uri = "pydrud://preview/connect?" + urlencode(
-        {k: str(v) for k, v in params.items() if v})
-    try:
-        target = parse_preview_uri(uri)
-    except PreviewUriError:
-        # Unusable payload — land in manual entry with the URI prefilled.
-        scan.scan_screen(page, {"mode": "manual", "uri": uri})
-        return
-    session.connect(Endpoint(
-        host=target.host, port=target.port,
-        session_id=target.session_id, token=target.token,
-        project_id=target.project_id,
-        project_name=target.project_name))
-    preview_screen(page)
-
-
-def _not_found_screen(page, params=None) -> None:
-    """Friendly 404 for unknown deep links."""
-    params = dict(params or {})
-    page.bgcolor = Theme.background
-    page.add(Column(key="pd_404", spacing=8, children=[
-        Column(key="pd_404_inner", spacing=8, children=[
-            Text404("Nothing here"),
-            Text404(f"No route matches {params.get('path', 'that link')}.",
-                    secondary=True),
-        ]),
-    ]))
-
-
-def Text404(value: str, secondary: bool = False):
-    from pydrud import Text
-
-    return Text(value, key=f"pd_404_t{int(secondary)}",
-                size=18 if not secondary else 13,
-                weight=700 if not secondary else 400,
-                color=Theme.text if not secondary else Theme.text_secondary)
-
-
-# ── the root target ─────────────────────────────────────────────────────────
 
 def main(page) -> None:
-    """The App target: render the current route's screen."""
+    """Build the current screen (called on startup and on every update)."""
     router.build_root()(page)
 
 
-# ── lifecycle hooks ─────────────────────────────────────────────────────────
-
-def _on_metrics_change(_info=None) -> None:
-    """Rotation, split screen, foldables: tell the dev server, reflow."""
-    handle_metrics()
-    refresh()
-
-
-def _on_error(_exc) -> None:
-    from app.preview.session import session
-
-    session.error = "A screen raised an error while rendering."
-    session.error_code = "app"
-    refresh()
+# ── deep links ───────────────────────────────────────────────────────────────
+#
+# A connect link carries a ``name`` query parameter (the project name), which
+# would collide with ``Router.push(name=...)`` in the generic URL router, so
+# Pydash intercepts connect links itself (see ``PydashRouter.handle_link``).
 
 
-# ── bootstrap ───────────────────────────────────────────────────────────────
+def _handle_connect_link(url: str) -> bool:
+    """Start a session from a connect deep link.
 
-def create_app(**kwargs) -> App:
-    """Build the Pydrud App with routes and hooks wired up."""
-    seed_brand()
-    configure_pydash_tokens()
-    _register_routes()
+    Returns ``True`` when *url* was a preview connect link (handled here) and
+    ``False`` so the router can try its own URL matching.
+    """
+    params = _connect_params(url)
+    if params is None:
+        return False
+    endpoint = _endpoint_from_params(params)
+    if endpoint is None:
+        router.replace("shell")
+        return True
+    session.connect(endpoint)
+    # Adopt any cached palette before the route builds; a first-time theme
+    # push arrives after the handshake and is applied by the renderer then.
+    from app.preview.renderer import adopt_remote_theme
 
-    app = App(target=main, title=APP_NAME, **kwargs)
-    bind(app)
-    app.attach_router(router)
-    app.on_deep_link(_on_deep_link)
-
-    app.on_metrics_change(_on_metrics_change)
-    app.on_error(_on_error)
-    return app
+    try:
+        adopt_remote_theme()
+    except Exception:
+        pass
+    router.replace("preview")
+    return True
 
 
-def _on_deep_link(url: str) -> None:
-    """Log arriving links; routing itself is handled by the Router."""
-    print(f"[{APP_NAME}] deep link: {url}")
+def _connect_params(url: str) -> Optional[dict]:
+    """The query parameters of a connect link, or ``None`` when it is not one."""
+    parts = urllib.parse.urlsplit(str(url))
+    authority = parts.netloc.lower()
+    path = parts.path.rstrip("/").lower()
+    is_connect = (
+        (authority == "preview" and path == "/connect")
+        or authority == "connect"
+        or path == "/connect"
+    )
+    if not is_connect:
+        return None
+    query = urllib.parse.parse_qs(parts.query)
+    return {key: values[0] for key, values in query.items() if values}
+
+
+def _endpoint_from_params(params: dict) -> Optional[Endpoint]:
+    """Build an endpoint from connect params, or ``None`` when unusable."""
+    uri = params.get("uri")
+    if uri:
+        try:
+            target = parse_preview_uri(normalise_uri(str(uri)))
+        except PreviewUriError:
+            return None
+        return Endpoint(
+            host=target.host, port=target.port,
+            session_id=target.session_id, token=target.token,
+            project_id=target.project_id, project_name=target.project_name,
+        )
+    try:
+        host = str(params["host"]).strip()
+        port = int(params["port"])
+        session_id = str(params["session"])
+        token = str(params["token"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not host or not session_id or not token or not 1 <= port <= 65535:
+        return None
+    return Endpoint(
+        host=host, port=port, session_id=session_id, token=token,
+        project_id=str(params.get("project", "")),
+        project_name=str(params.get("name", "")),
+    )
+
+
+router.link_handler = _handle_connect_link
+
+
+# ── startup ──────────────────────────────────────────────────────────────────
 
 
 def start_app() -> None:
-    """Entry point invoked by the generated Android activity."""
-    create_app().run()
+    """Local entry point: desktop ``pydrud run`` and tests.
+
+    On device the generated ``app.android_main`` performs the same wiring and
+    boots the app itself; this keeps a desktop run identical.
+    """
+    app = bind(App(
+        target=router.build_root(),
+        title=APP_NAME,
+        stylesheet=os.path.join(os.path.dirname(__file__), "theme.pss"),
+    ))
+    app.attach_router(router)
+    # Deep links are delivered to ``router.handle_link`` automatically once a
+    # router is attached; ``PydashRouter`` forwards connect links to
+    # ``_handle_connect_link`` above.
+    app.run()
+
+
+__all__ = ["main", "refresh", "router", "start_app"]

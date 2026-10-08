@@ -1,476 +1,372 @@
-"""Home — the connection dashboard.
+"""Home — the dashboard: connect, watch the session, learn the flow.
 
-Answers, in order: *Am I connected? To what? Did it sync? What do I do
-next?* The primary action is always scanning the `pydrud dev` QR code;
-once a session is live the same screen becomes its control panel with
-server details, live statistics and reconnect/disconnect controls.
+Home is the first thing the user sees and the only place a session is
+started. It has four faces, chosen by the live state of
+:data:`app.preview.session`:
+
+* **idle** — the two ways in (scan a QR code, paste a URL) plus the
+  "how it works" explainer and, if there is one, the last session;
+* **busy** — a progress card with the step the handshake is on and a cancel;
+* **failed** — a red notice with the friendly reason and a retry;
+* **live** — the project card: identity, live counters and the way into the
+  immersive preview.
+
+Everything is rebuilt from the reactive session each time the app refreshes,
+so the dashboard is never stale.
 """
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydrud import (
-    Button, Card, Colors, Column, Container, Divider, Icon, Icons, Radius,
-    Row, Spacing, Text, Theme, Widget,
+    Button,
+    Column,
+    Container,
+    Icon,
+    Icons,
+    LinearProgress,
+    ListTile,
+    OutlinedButton,
+    Row,
+    Text,
+    TextButton,
 )
 
+from app import connection, recents, state, theme
 from app.components import (
-    BrandHero, CodeChip, MetaList, MetaRow, StatusPill, section,
+    brand_hero,
+    card,
+    meta_list,
+    notice_state,
+    section_header,
+    spinner,
+    stat_tile,
+    step_row,
+    status_dot,
 )
-from app.config import (
-    APP_VERSION, PREVIEW_PROTOCOL_VERSION, RENDERER_PROTOCOL_VERSION,
-)
-from app.preview.models import ConnectionState, Endpoint
-from app.preview.session import session
-from app.preview.uri import (
-    PreviewTarget, parse_preview_uri,
+from app.config import APP_NAME, APP_VERSION, PYDRUD_VERSION
+from app.preview import session
+from app.preview.models import (
+    STATE_HINTS,
+    STATE_LABELS,
+    ConnectionState,
+    Endpoint,
 )
 from app.runtime import refresh, router
-from app.state import last_endpoint
-from app.theme import status_color
 
 __all__ = ["body"]
 
 
-def body() -> list:
-    """The Home tab's sections."""
-    return [
-        BrandHero("pd_home_hero", _hero_subtitle()),
-        _connection_card(),
-        _how_it_works_card(),
-        _about_card(),
-    ]
+def body() -> Column:
+    """The scrollable Home tab body."""
+    children = [brand_hero(footer=_hero_footer()), _primary_actions()]
+
+    section = _session_section()
+    if section is not None:
+        children.append(section)
+
+    recent = _recent_section()
+    if recent is not None:
+        children.append(recent)
+
+    children.append(_how_it_works())
+    children.append(_footer())
+
+    return Column(
+        key="pd_home",
+        class_="pd-screen",
+        scroll=True,
+        spacing=18,
+        style={"padding": theme.page_insets(top=16, bottom=28)},
+        children=children,
+    )
 
 
-def _hero_subtitle() -> str:
+# ── hero ─────────────────────────────────────────────────────────────────────
+
+
+def _hero_footer() -> Row:
+    label = STATE_LABELS.get(session.state, "Ready")
+    return Row(
+        key="pd_hero_footer",
+        spacing=8,
+        main_axis_size="min",
+        vertical_alignment="center",
+        children=[
+            Container(
+                key="pd_hero_dot",
+                style={"width": 9, "height": 9, "borderRadius": 999,
+                       "bg": theme.on_brand(0.9)},
+            ),
+            Text(label, key="pd_hero_footer_text", class_="pd-hero-caption",
+                 max_lines=1),
+        ],
+    )
+
+
+# ── actions ──────────────────────────────────────────────────────────────────
+
+
+def _primary_actions() -> Column:
     if session.is_live:
-        return f"Previewing {session.project_name}"
-    if session.state == ConnectionState.RECONNECTING:
-        return "Reconnecting to the development server…"
-    return "Scan, connect, see your UI — live"
+        return Column(key="pd_actions", spacing=10, children=[
+            Button("Open live preview", icon=Icons.PLAY_ARROW, full_width=True,
+                   size="lg", on_click=lambda _e: _open_preview()),
+            OutlinedButton("Disconnect", icon=Icons.LOGOUT, full_width=True,
+                           on_click=lambda _e: _disconnect()),
+        ])
+    busy = session.is_busy
+    return Column(key="pd_actions", spacing=10, children=[
+        Button("Scan QR code", icon=Icons.QR_CODE, full_width=True, size="lg",
+               disabled=busy, on_click=lambda _e: _open_scan("scan")),
+        OutlinedButton("Enter connection URL", icon=Icons.LINK,
+                       full_width=True, disabled=busy,
+                       on_click=lambda _e: _open_scan("manual")),
+    ])
 
 
-# ── connection card ─────────────────────────────────────────────────────────
+# ── session state ────────────────────────────────────────────────────────────
 
-def _connection_card() -> Widget:
-    state = session.state
 
+def _session_section():
     if session.is_live:
         return _live_card()
     if session.is_busy:
         return _busy_card()
-    if state == ConnectionState.FAILED:
+    if session.state == ConnectionState.FAILED:
         return _failed_card()
-    return _idle_card()
+    return None
 
 
-def _idle_card() -> Widget:
-    reconnect = _reconnect_row()
-    return Card(
-        key="pd_home_idle",
-        padding=Spacing.LG,
-        child=Column(
-            key="pd_home_idle_col",
-            spacing=Spacing.LG,
+def _live_card() -> Container:
+    stats = session.stats
+    host = session.endpoint.describe() if session.endpoint else "—"
+    return card(key="pd_live_card", spacing=14, child=[
+        Row(
+            key="pd_live_head",
+            spacing=10,
+            main_axis_size="max",
+            vertical_alignment="center",
             children=[
-                _status_row("pd_home_idle_status"),
-                Text("Run `pydrud dev` in your project, then point Pydash "
-                     "at the QR code it prints. Your UI appears here the "
-                     "moment it connects.",
-                     key="pd_home_idle_hint", size=13,
-                     color=Theme.text_secondary),
-                Button("Scan QR code", key="pd_home_scan", icon=Icons.QR_CODE,
-                       full_width=True, size="lg"
-                       ).on_click(lambda _e: router.push("scan", mode="scan")),
-                Button("Connect manually", key="pd_home_manual",
-                       variant="tonal", icon=Icons.EDIT, full_width=True
-                       ).on_click(lambda _e: router.push("scan",
-                                                         mode="manual")),
-                reconnect,
+                status_dot(key="pd_live_dot", size=10),
+                Text(session.project_name, key="pd_live_name", class_="pd-h2",
+                     expand=1, max_lines=1),
+                Text("LIVE", key="pd_live_tag", class_="pd-caption",
+                     style={"color": theme.success()}),
+            ],
+        ),
+        meta_list([
+            ("Host", host),
+            ("Revision", stats.revision),
+            ("Last sync", stats.describe_last_sync()),
+        ], key="pd_live_meta"),
+        Row(key="pd_live_stats", spacing=10, children=[
+            stat_tile(stats.snapshots, "SNAPSHOTS", key="pd_stat_snapshots"),
+            stat_tile(stats.patches, "PATCHES", key="pd_stat_patches"),
+            stat_tile(stats.events_sent, "EVENTS", key="pd_stat_events"),
+        ]),
+    ])
+
+
+def _busy_card() -> Container:
+    label = STATE_LABELS.get(session.state, "Connecting…")
+    hint = STATE_HINTS.get(session.state, "")
+    return card(key="pd_busy_card", tint=True, spacing=12, child=[
+        Row(
+            key="pd_busy_head",
+            spacing=10,
+            main_axis_size="max",
+            vertical_alignment="center",
+            children=[
+                status_dot(key="pd_busy_dot", size=10),
+                Text(label, key="pd_busy_label", class_="pd-h2", expand=1,
+                     max_lines=1),
+            ],
+        ),
+        LinearProgress(key="pd_busy_bar", indeterminate=True,
+                       color=theme.primary()),
+        Text(hint, key="pd_busy_hint", class_="pd-body"),
+        OutlinedButton("Cancel", icon=Icons.CLOSE, full_width=True,
+                       on_click=lambda _e: _cancel()),
+    ])
+
+
+def _failed_card() -> Container:
+    message = session.describe_error() or STATE_HINTS.get(
+        ConnectionState.FAILED, "")
+    return notice_state(
+        Icons.ERROR,
+        "Could not connect",
+        message,
+        key="pd_failed",
+        tone="danger",
+        action=Row(
+            key="pd_failed_actions",
+            spacing=10,
+            main_axis_size="min",
+            children=[
+                Button("Retry", icon=Icons.REFRESH,
+                       on_click=lambda _e: _retry()),
+                OutlinedButton("Scan again",
+                               on_click=lambda _e: _open_scan("scan")),
             ],
         ),
     )
 
 
-def _reconnect_row() -> Widget:
-    endpoint = _stored_endpoint()
-    if endpoint is None:
-        return Container(key="pd_home_no_recent", height=0)
-    return Column(
-        key="pd_home_recent",
-        spacing=Spacing.SM,
-        children=[
-            Divider(key="pd_home_recent_div"),
-            Text("Last session", key="pd_home_recent_label", size=12,
-                 weight=700, color=Theme.text_secondary,
-                 style={"font": {"letterSpacing": 0.08}}),
-            Text(f"{endpoint.project_name} · {endpoint.describe()}",
-                 key="pd_home_recent_value", size=13,
-                 color=Theme.text_secondary),
-            Button("Reconnect", key="pd_home_reconnect", variant="outlined",
-                   size="sm", icon=Icons.SYNC
-                   ).on_click(lambda _e: _reconnect(endpoint)),
-        ],
+def _recent_section():
+    """The recent-apps shortcut: tap a row to re-check that project's link.
+
+    Rows expire on their own (see :mod:`app.recents`), so this section is a
+    live view rather than a growing history. It stays visible even while a
+    session is live, so the list is always there to switch projects from.
+    Tapping one runs the same connect-and-spin flow as the scanner, with the
+    spinner shown on the row.
+    """
+    items = recents.entries()
+    if not items:
+        return None
+    return Column(key="pd_recent", spacing=10, children=[
+        section_header(
+            "Recent apps", caption="TAP TO RECONNECT", key="pd_recent_section",
+            action=TextButton("Clear", on_click=lambda _e: _clear_recents()),
+        ),
+        card(key="pd_recent_card", spacing=0,
+             child=[_recent_row(index, entry)
+                    for index, entry in enumerate(items)]),
+    ])
+
+
+def _recent_row(index: int, entry: dict) -> ListTile:
+    """One single-line recent-app tile — as compact as a Settings link row.
+
+    The old two-line tile carried the host and age in a subtitle, which made
+    every row twice as tall as the "Learn more" tiles it sits beside. The age
+    now rides in the trailing slot as a quiet caption, so the row keeps its
+    freshness signal without the extra line.
+    """
+    endpoint = Endpoint.from_dict(entry)
+    if _is_checking(entry):
+        trailing = spinner(size=20, key=f"pd_recent_spin_{index}")
+    else:
+        age = recents.age_label(entry)
+        tail: list = []
+        if age:
+            tail.append(Text(age, key=f"pd_recent_age_{index}",
+                             class_="pd-caption", max_lines=1))
+        tail.append(Icon(Icons.CHEVRON_RIGHT, key=f"pd_recent_chev_{index}",
+                         size=18, color=theme.text_secondary()))
+        trailing = Row(key=f"pd_recent_tail_{index}", spacing=6,
+                       main_axis_size="min", vertical_alignment="center",
+                       children=tail)
+    return ListTile(
+        endpoint.project_name or endpoint.host or "Pydrud project",
+        leading=Icons.PLAY_ARROW,
+        trailing=trailing,
+        on_click=lambda _e: _open_recent(entry),
+        key=f"pd_recent_{index}",
     )
 
 
-def _stored_endpoint() -> Optional[Endpoint]:
-    stored = last_endpoint.value
-    if not stored or not isinstance(stored, dict):
-        return None
-    if not stored.get("session_id") or not stored.get("token"):
-        return None
-    return Endpoint(
-        host=str(stored.get("host", "")),
-        port=int(stored.get("port", 0) or 0),
-        session_id=str(stored["session_id"]),
-        token=str(stored["token"]),
-        project_id=str(stored.get("project_id", "")),
-        project_name=str(stored.get("project_name", "")),
+def _is_checking(entry: dict) -> bool:
+    """Whether this row is the one whose connection is being checked."""
+    if not state.connecting.value:
+        return False
+    target = state.connecting_endpoint.value
+    if not isinstance(target, dict):
+        return False
+    return (str(target.get("host", "")) == str(entry.get("host", ""))
+            and _port(target) == _port(entry))
+
+
+def _port(payload: dict) -> int:
+    try:
+        return int(payload.get("port", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+# ── explainer ────────────────────────────────────────────────────────────────
+
+
+def _how_it_works() -> Column:
+    return Column(key="pd_how", spacing=10, children=[
+        section_header("How it works", caption="NO APK REBUILDS",
+                       key="pd_how_section"),
+        card(key="pd_how_card", spacing=16, child=[
+            step_row(1, "Start the dev server",
+                     "Run `pydrud dev` in your project. It prints a QR code "
+                     "with the address and a one-run key.",
+                     key="pd_step_one"),
+            step_row(2, "Scan it with Pydash",
+                     "Point your camera at the code, or paste the URL. Pydash "
+                     "connects over the local network.",
+                     key="pd_step_two"),
+            step_row(3, "Edit and watch",
+                     "Every save re-renders here natively. No rebuild, no "
+                     "reinstall, no cables.",
+                     key="pd_step_three"),
+        ]),
+    ])
+
+
+def _footer() -> Container:
+    return Container(
+        key="pd_home_footer_box",
+        width="match",
+        alignment="center",
+        child=Text(
+            f"{APP_NAME} {APP_VERSION}  ·  Pydrud {PYDRUD_VERSION}",
+            key="pd_home_footer", class_="pd-caption",
+        ),
     )
 
 
-def _reconnect(endpoint: Endpoint) -> None:
-    session.connect(endpoint)
+# ── actions ──────────────────────────────────────────────────────────────────
+
+
+def _open_scan(mode: str) -> None:
+    router.push("scan", mode=mode)
+
+
+def _open_preview() -> None:
+    # Adopt the previewed palette before the route builds (see renderer).
+    from app.preview.renderer import adopt_remote_theme
+
+    try:
+        adopt_remote_theme()
+    except Exception:
+        pass
     router.push("preview")
 
 
-def _busy_card() -> Widget:
-    label = {
-        ConnectionState.CONNECTING: "Reaching the development server",
-        ConnectionState.HANDSHAKING: "Verifying session & protocols",
-        ConnectionState.RECONNECTING: "Reconnecting",
-    }.get(session.state, "Connecting")
-    detail = ("" if session.state != ConnectionState.RECONNECTING
-              else f"attempt {session.reconnect_attempt}")
-    return Card(
-        key="pd_home_busy",
-        padding=Spacing.LG,
-        child=Column(
-            key="pd_home_busy_col",
-            spacing=Spacing.MD,
-            children=[
-                _status_row("pd_home_busy_status"),
-                Row(
-                    key="pd_home_busy_row",
-                    spacing=Spacing.MD,
-                    vertical_alignment="center",
-                    children=[
-                        Icon(Icons.SYNC, key="pd_home_busy_icon", size=20,
-                             color=Theme.primary),
-                        Column(
-                            key="pd_home_busy_text",
-                            spacing=2,
-                            expand=1,
-                            children=[
-                                Text(label, key="pd_home_busy_label",
-                                     size=14, weight=600,
-                                     color=Theme.text),
-                                Text(detail or session.endpoint.describe()
-                                     if session.endpoint else detail,
-                                     key="pd_home_busy_detail", size=12,
-                                     color=Theme.text_secondary),
-                            ],
-                        ),
-                    ],
-                ),
-            ],
-        ),
-    )
-
-
-def _failed_card() -> Widget:
-    return Card(
-        key="pd_home_failed",
-        padding=Spacing.LG,
-        child=Column(
-            key="pd_home_failed_col",
-            spacing=Spacing.MD,
-            children=[
-                _status_row("pd_home_failed_status"),
-                Text(session.describe_error()
-                     or "The development server could not be reached.",
-                     key="pd_home_failed_error", size=13,
-                     color=Theme.text_secondary),
-                Row(
-                    key="pd_home_failed_actions",
-                    spacing=Spacing.SM,
-                    children=[
-                        Button("Retry", key="pd_home_retry", icon=Icons.REFRESH
-                               ).on_click(lambda _e: session.reconnect()),
-                        Button("Scan again", key="pd_home_rescan",
-                               variant="tonal", icon=Icons.QR_CODE
-                               ).on_click(lambda _e: router.push("scan", mode="scan")),
-                    ],
-                ),
-            ],
-        ),
-    )
-
-
-def _live_card() -> Widget:
-    stats = session.stats
-    endpoint = session.endpoint
-    server = session.server
-    return Column(
-        key="pd_home_live",
-        spacing=Spacing.LG,
-        children=[
-            _live_hero(),
-            Card(
-                key="pd_home_live_details",
-                padding=Spacing.LG,
-                child=Column(
-                    key="pd_home_live_details_col",
-                    spacing=Spacing.MD,
-                    children=[
-                        section("Server", "pd_home_live_sec"),
-                        MetaList("pd_home_live_meta", [
-                            MetaRow("pd_home_live_project", "Project",
-                                    session.project_name, icon=Icons.FOLDER),
-                            MetaRow("pd_home_live_host", "Address",
-                                    endpoint.describe() if endpoint else "—",
-                                    icon=Icons.SERVER, mono=True),
-                            MetaRow("pd_home_live_session", "Session",
-                                    (server.session_id[:13] + "…")
-                                    if server and server.session_id else "—",
-                                    icon=Icons.KEY, mono=True),
-                            MetaRow("pd_home_live_proto", "Protocols",
-                                    f"preview v{PREVIEW_PROTOCOL_VERSION} · "
-                                    f"renderer v{RENDERER_PROTOCOL_VERSION}",
-                                    icon=Icons.LAYERS, mono=True),
-                            MetaRow("pd_home_live_sync", "Last sync",
-                                    stats.describe_last_sync(),
-                                    icon=Icons.SYNC),
-                            MetaRow("pd_home_live_nodes", "Tree size",
-                                    f"{session.tree.node_count()} nodes",
-                                    icon=Icons.GRID),
-                        ]),
-                    ],
-                ),
-            ),
-            Card(
-                key="pd_home_live_stats",
-                padding=Spacing.LG,
-                child=Column(
-                    key="pd_home_live_stats_col",
-                    spacing=Spacing.MD,
-                    children=[
-                        section("Session traffic", "pd_home_live_stats_sec"),
-                        Row(
-                            key="pd_home_live_stats_row",
-                            spacing=Spacing.SM,
-                            children=[
-                                _stat("pd_home_stat_rev", "Revision",
-                                      str(stats.revision)),
-                                _stat("pd_home_stat_snaps", "Snapshots",
-                                      str(stats.snapshots)),
-                                _stat("pd_home_stat_patches", "Patches",
-                                      str(stats.patches)),
-                                _stat("pd_home_stat_ops", "Patch ops",
-                                      str(stats.applied_ops)),
-                            ],
-                        ),
-                        Text("Edit any Python file on your computer and "
-                             "watch these numbers move.",
-                             key="pd_home_live_stats_hint", size=12,
-                             color=Theme.text_secondary),
-                    ],
-                ),
-            ),
-            Row(
-                key="pd_home_live_actions",
-                spacing=Spacing.SM,
-                children=[
-                    Button("Open live preview", key="pd_home_open",
-                           icon=Icons.PLAY_CIRCLE, expand=1, size="lg"
-                           ).on_click(lambda _e: router.push("preview")),
-                    Button("", key="pd_home_disconnect", icon=Icons.CLOSE,
-                           variant="outlined", size="lg",
-                           ).on_click(lambda _e: _disconnect()),
-                ],
-            ),
-        ],
-    )
-
-
-def _stat(key: str, label: str, value: str) -> Widget:
-    return Container(
-        key=f"{key}_box",
-        expand=1,
-        padding=Spacing.MD,
-        border_radius=Radius.MD,
-        bg=Theme.surface_variant,
-        child=Column(
-            key=f"{key}_col",
-            spacing=2,
-            horizontal_alignment="center",
-            children=[
-                Text(value, key=f"{key}_value", size=17, weight=800,
-                     color=Theme.primary),
-                Text(label.upper(), key=f"{key}_label", size=9, weight=700,
-                     color=Theme.text_secondary,
-                     style={"font": {"letterSpacing": 0.08}}),
-            ],
-        ),
-    )
-
-
-def _live_hero() -> Widget:
-    stats = session.stats
-    return Container(
-        key="pd_home_live_hero",
-        width="match",
-        border_radius=Radius.XL,
-        padding=Spacing.XL,
-        style={
-            "gradient": {
-                "colors": [Colors.SUCCESS, Colors.mix(
-                    Colors.SUCCESS, Theme.secondary, 0.6)],
-                "direction": "diagonal",
-            },
-        },
-        child=Row(
-            key="pd_home_live_hero_row",
-            spacing=Spacing.LG,
-            vertical_alignment="center",
-            children=[
-                Container(
-                    key="pd_home_live_hero_ring",
-                    width=52,
-                    height=52,
-                    border_radius=Radius.PILL,
-                    bg=Colors.with_opacity(Colors.WHITE, 0.2),
-                    alignment="center",
-                    child=Icon(Icons.ANDROID, key="pd_home_live_hero_icon",
-                               size=26, color=Colors.WHITE),
-                ),
-                Column(
-                    key="pd_home_live_hero_col",
-                    spacing=2,
-                    expand=1,
-                    children=[
-                        Text(session.project_name,
-                             key="pd_home_live_hero_title", size=19,
-                             weight=800, color=Colors.WHITE, max_lines=1,
-                             overflow="ellipsis"),
-                        Text(f"Connected · rev {stats.revision} · "
-                             f"{stats.describe_last_sync()}",
-                             key="pd_home_live_hero_sub", size=12,
-                             color=Colors.with_opacity(Colors.WHITE, 0.9)),
-                    ],
-                ),
-                Text("LIVE", key="pd_home_live_hero_badge", size=11,
-                     weight=800, color=Colors.WHITE,
-                     style={"font": {"letterSpacing": 0.16}}),
-            ],
-        ),
-    )
-
-
-def _status_row(key: str) -> Widget:
-    from app.preview.models import STATE_HINTS, STATE_LABELS
-
-    state = session.state
-    return Row(
-        key=f"{key}_line",
-        spacing=Spacing.SM,
-        vertical_alignment="center",
-        children=[
-            StatusPill(key, state),
-            Text(STATE_HINTS.get(state, ""), key=f"{key}_hint", size=12,
-                 color=Theme.text_secondary, expand=1),
-        ],
-    )
-
-
 def _disconnect() -> None:
-    session.disconnect(reason="closed from the dashboard")
+    session.disconnect()
     refresh()
 
 
-# ── guidance ────────────────────────────────────────────────────────────────
-
-def _how_it_works_card() -> Widget:
-    steps = (
-        ("Run the dev server",
-         "In your Pydrud project:", "pydrud dev"),
-        ("Scan the QR code",
-         "It appears in the terminal — Pydash reads it with the camera.",
-         None),
-        ("Edit and save",
-         "Every save re-renders here in milliseconds. No APK, no install.",
-         None),
-    )
-    rows: list[Widget] = []
-    for index, (title, note, command) in enumerate(steps):
-        rows.append(Row(
-            key=f"pd_home_step{index}",
-            spacing=Spacing.MD,
-            vertical_alignment="center",
-            children=[
-                Container(
-                    key=f"pd_home_step{index}_num",
-                    width=28,
-                    height=28,
-                    border_radius=Radius.PILL,
-                    bg=Colors.with_opacity(Theme.primary, 0.12),
-                    alignment="center",
-                    child=Text(str(index + 1),
-                               key=f"pd_home_step{index}_num_t", size=13,
-                               weight=800, color=Theme.primary),
-                ),
-                Column(
-                    key=f"pd_home_step{index}_col",
-                    spacing=4,
-                    expand=1,
-                    children=[
-                        Text(title, key=f"pd_home_step{index}_t", size=14,
-                             weight=600, color=Theme.text),
-                        Text(note, key=f"pd_home_step{index}_n", size=12,
-                             color=Theme.text_secondary),
-                        *([CodeChip(f"pd_home_step{index}_code", command)]
-                          if command else []),
-                    ],
-                ),
-            ],
-        ))
-    return Card(
-        key="pd_home_how",
-        padding=Spacing.LG,
-        child=Column(
-            key="pd_home_how_col",
-            spacing=Spacing.LG,
-            children=[
-                section("How it works", "pd_home_how_sec"),
-                *rows,
-            ],
-        ),
-    )
+def _cancel() -> None:
+    connection.cancel()
 
 
-def _about_card() -> Widget:
-    from app.config import PYDRUD_VERSION
+def _retry() -> None:
+    connection.retry()
 
-    return Card(
-        key="pd_home_about",
-        padding=Spacing.LG,
-        child=Column(
-            key="pd_home_about_col",
-            spacing=Spacing.MD,
-            children=[
-                section("About", "pd_home_about_sec"),
-                MetaList("pd_home_about_meta", [
-                    MetaRow("pd_home_about_app", "Pydash", APP_VERSION,
-                            icon=Icons.SPARKLE),
-                    MetaRow("pd_home_about_fw", "Pydrud SDK",
-                            PYDRUD_VERSION, icon=Icons.PYTHON),
-                ]),
-                Text("Pydash is the preview client; your machine runs the "
-                     "project. Find both on GitHub.",
-                     key="pd_home_about_note", size=12,
-                     color=Theme.text_secondary),
-            ],
-        ),
-    )
+
+def _open_recent(entry: dict) -> None:
+    """Re-check a recent project's link, showing the spinner on its row.
+
+    Tapping a recent while another session is live switches to it: the current
+    session is closed first so the connect flow starts from a clean slate.
+    """
+    if state.connecting.value or session.is_busy:
+        return
+    if session.is_live:
+        session.disconnect()
+    endpoint = Endpoint.from_dict(entry)
+    recents.touch(endpoint)
+    connection.start(endpoint, origin="home")
+
+
+def _clear_recents() -> None:
+    recents.clear()
+    refresh()
