@@ -17,7 +17,7 @@ import pydrud
 # ── Identity ─────────────────────────────────────────────────────────────────
 APP_NAME = "Pydash"
 APP_TAGLINE = "Live preview for Pydrud"
-APP_VERSION = "2.0.0"
+APP_VERSION = "1.0.2"
 PACKAGE = "com.pydrud.pydash"
 
 # ── Brand ────────────────────────────────────────────────────────────────────

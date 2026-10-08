@@ -25,8 +25,8 @@ android {
         applicationId = "com.pydrud.pydash"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "2.0.0"
+        versionCode = 2
+        versionName = "1.0.2"
 
         // The embedded CPython interpreter ships one native library per ABI;
         // a host/none build has no interpreter, so it lists none.

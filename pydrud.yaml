@@ -3,8 +3,8 @@
 # and run `pydrud sync`; never hand-edit the generated files under android/.
 app_name: "Pydash"
 package: "com.pydrud.pydash"
-version_code: 1
-version_name: "2.0.0"
+version_code: 2
+version_name: "1.0.2"
 runtime: "chaquopy"
 
 # Android SDK and native targets
@@ -40,6 +40,6 @@ agp_version: "8.13.2"
 gradle_version: "8.14.4"
 
 # Framework and renderer protocol metadata
-framework_version: "2.1.0"
+framework_version: "2.1.1"
 protocol_version: 2
-pydrud_version: "2.1.0"
+pydrud_version: "2.1.1"

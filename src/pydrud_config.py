@@ -6,8 +6,8 @@ Edit pydrud.yaml and run `pydrud sync` for Android projects.
 # ── App metadata ─────────────────────────────────────────────────────────────
 APP_NAME = "Pydash"
 PACKAGE = "com.pydrud.pydash"
-VERSION = "2.0.0"
-VERSION_CODE = 1
+VERSION = "1.0.2"
+VERSION_CODE = 2
 ASSETS_DIR = "assets"
 PERMISSIONS = ["CAMERA"]
 CAPABILITIES = ["haptics", "notifications"]
