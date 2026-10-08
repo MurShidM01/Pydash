@@ -252,7 +252,7 @@ public class BridgeService {
         try {
             JSONObject data = collectMetrics();
             data.put("protocol_version", PROTOCOL_VERSION);
-            data.put("renderer_version", "2.1.0");
+            data.put("renderer_version", "2.1.4");
             JSONObject capabilities = new JSONObject();
             capabilities.put("transactional_render", true);
             capabilities.put("revisioned_render", true);

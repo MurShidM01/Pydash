@@ -191,8 +191,7 @@ def _match_selector(
     last = len(selector.compounds) - 1
 
     def match_at(index: int, current: Widget) -> bool:
-        # The precomputed facts describe *widget*; an ancestor compound must
-        # recompute them for itself.
+
         is_subject = index == last
         if not _matches_compound(selector.compounds[index], current,
                                  parents=parents, sibling_info=sibling_info,
@@ -563,8 +562,6 @@ def resolve_styles(
                                           DeclarationBlock]]] = {}
         custom: dict = {}
 
-        # Class and state membership depend only on the widget, not on the
-        # rule, so compute them once instead of inside every selector match.
         widget_classes = _widget_classes(widget)
         widget_states = _widget_states(widget)
 

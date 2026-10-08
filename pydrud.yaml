@@ -17,6 +17,11 @@ abi_filters:
   - "armeabi-v7a"
   - "x86_64"
 
+# Emit one APK per ABI (plus a universal APK) instead of a single universal
+# APK. Split APKs are a fraction of the size, so users download only their
+# device's ABI. `pydrud build` then writes several APKs into the output dir.
+abi_splits: true
+
 # Android application behavior
 assets_dir: "assets"
 scheme: "pydash"
@@ -40,6 +45,6 @@ agp_version: "8.13.2"
 gradle_version: "8.14.4"
 
 # Framework and renderer protocol metadata
-framework_version: "2.1.1"
+framework_version: "2.1.4"
 protocol_version: 2
-pydrud_version: "2.1.1"
+pydrud_version: "2.1.4"

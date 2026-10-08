@@ -27,12 +27,6 @@ android {
         targetSdk = 36
         versionCode = 2
         versionName = "1.0.2"
-
-        // The embedded CPython interpreter ships one native library per ABI;
-        // a host/none build has no interpreter, so it lists none.
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        }
     }
 
     signingConfigs {
@@ -64,6 +58,36 @@ android {
         }
         debug {
             isMinifyEnabled = false
+        }
+    }
+
+    // One APK per ABI plus a universal APK (`abi_splits: true` in pydrud.yaml).
+    // A single-ABI APK carries only its own ABI's native libraries — for a
+    // Chaquopy app that is roughly a third of the universal size — so a
+    // release can offer arm64-v8a, armeabi-v7a and x86_64 downloads next to
+    // the universal one.
+    //
+    // This uses a product flavor dimension rather than APK splits: Chaquopy
+    // requires `ndk.abiFilters`, and AGP rejects setting that alongside
+    // `splits.abi`, so flavors are the supported route (see the Chaquopy FAQ,
+    // "How can I make my app smaller?").
+    flavorDimensions += "abi"
+    productFlavors {
+        create("arm64") {
+            dimension = "abi"
+            ndk { abiFilters += listOf("arm64-v8a") }
+        }
+        create("armv7") {
+            dimension = "abi"
+            ndk { abiFilters += listOf("armeabi-v7a") }
+        }
+        create("x86_64") {
+            dimension = "abi"
+            ndk { abiFilters += listOf("x86_64") }
+        }
+        create("universal") {
+            dimension = "abi"
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         }
     }
 
