@@ -6,14 +6,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-__all__ = ["ConnectionState", "Endpoint", "ServerInfo", "STATES"]
+__all__ = ["ConnectionState", "Endpoint", "ServerInfo", "SessionStats", "STATES",
+           "STATE_HINTS", "STATE_LABELS"]
 
 
 class ConnectionState:
     """The lifecycle of a preview session, as one set of string constants.
 
-    String values (not an enum) so they serialise cleanly into State
-    objects and render directly in the UI.
+    String values (not an enum) so they serialise cleanly into State objects
+    and render directly in the UI.
     """
 
     IDLE = "idle"                  #: never connected, nothing pending
@@ -76,6 +77,25 @@ class Endpoint:
 
     def describe(self) -> str:
         return f"{self.host}:{self.port}"
+
+    def as_dict(self) -> dict:
+        return {
+            "host": self.host, "port": self.port,
+            "session_id": self.session_id, "token": self.token,
+            "project_id": self.project_id,
+            "project_name": self.project_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Endpoint":
+        return cls(
+            host=str(data.get("host", "")),
+            port=int(data.get("port", 0) or 0),
+            session_id=str(data.get("session_id", "")),
+            token=str(data.get("token", "")),
+            project_id=str(data.get("project_id", "")),
+            project_name=str(data.get("project_name", "")),
+        )
 
 
 @dataclass

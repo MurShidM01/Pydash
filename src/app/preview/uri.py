@@ -1,17 +1,16 @@
 """Preview URI parsing — the QR payload printed by ``pydrud dev``.
 
-``pydrud dev`` encodes one URI that carries everything Pydash needs to
-reach the development server::
+``pydrud dev`` encodes one URI that carries everything Pydash needs to reach
+the development server::
 
     pydrud://preview/connect?host=192.168.1.20&port=8597
         &session=<uuid>&token=<urlsafe-secret>&protocol=1&renderer=2
         &project=<id>&name=<project name>
 
-This module is the client-side mirror of the host's
-``pydrud.core.preview`` contract (Pydrud 2.0.2): the same scheme,
-authority, path, parameter names and validation rules. Keeping a local
-copy is intentional — the host-only preview modules are excluded from the
-runtime bundled into the APK, and the client must not depend on them.
+This module is the client-side mirror of the host's ``pydrud.core.preview``
+contract. Keeping a local copy is intentional — the host-only preview modules
+are excluded from the runtime bundled into the APK, so the client must not
+depend on them.
 """
 
 from __future__ import annotations
@@ -22,7 +21,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.config import (
-    DEFAULT_PREVIEW_PORT,
     PREVIEW_AUTHORITY,
     PREVIEW_PATH,
     PREVIEW_PROTOCOL_VERSION,
@@ -30,7 +28,8 @@ from app.config import (
     RENDERER_PROTOCOL_VERSION,
 )
 
-__all__ = ["PreviewUriError", "parse_preview_uri", "normalise_uri"]
+__all__ = ["PreviewUriError", "PreviewTarget", "parse_preview_uri",
+           "normalise_uri"]
 
 
 class PreviewUriError(ValueError):
@@ -77,14 +76,13 @@ def parse_preview_uri(uri: str) -> PreviewTarget:
             or parsed.path != PREVIEW_PATH):
         raise PreviewUriError(
             "invalid_uri",
-            "Not a Pydrud preview code. Run `pydrud dev` and scan the "
-            "QR code it prints.")
+            "Not a Pydrud preview code. Run `pydrud dev` and scan the QR code "
+            "it prints.")
 
     try:
         values = urllib.parse.parse_qs(parsed.query, strict_parsing=True)
     except ValueError as exc:
-        raise PreviewUriError(
-            "invalid_uri", "Malformed preview code.") from exc
+        raise PreviewUriError("invalid_uri", "Malformed preview code.") from exc
 
     def one(name: str) -> str:
         found = values.get(name, [])
@@ -98,14 +96,13 @@ def parse_preview_uri(uri: str) -> PreviewTarget:
     if protocol != PREVIEW_PROTOCOL_VERSION:
         raise PreviewUriError(
             "unsupported_version",
-            f"Preview protocol {protocol} is not supported "
-            f"(Pydash speaks {PREVIEW_PROTOCOL_VERSION}). "
-            "Update Pydrud or Pydash.")
+            f"Preview protocol {protocol} is not supported (Pydash speaks "
+            f"{PREVIEW_PROTOCOL_VERSION}). Update Pydrud or Pydash.")
     if renderer != RENDERER_PROTOCOL_VERSION:
         raise PreviewUriError(
             "unsupported_renderer",
-            f"Renderer protocol {renderer} is not supported "
-            f"(Pydash speaks {RENDERER_PROTOCOL_VERSION}).")
+            f"Renderer protocol {renderer} is not supported (Pydash speaks "
+            f"{RENDERER_PROTOCOL_VERSION}).")
 
     try:
         host = _connectable_host(one("host"))
@@ -129,8 +126,8 @@ def normalise_uri(text: str) -> str:
     """Tidy manually-entered text into a URI Pydash can parse.
 
     Users paste the connection URI from the terminal, sometimes with
-    surrounding quotes, whitespace or a clipboard label; make a best
-    effort before validation so manual entry feels forgiving.
+    surrounding quotes, whitespace or a clipboard label; make a best effort
+    before validation so manual entry feels forgiving.
     """
     cleaned = str(text or "").strip().strip("'\"`").strip()
     if not cleaned:
@@ -140,6 +137,30 @@ def normalise_uri(text: str) -> str:
         if cleaned.startswith(f"{PREVIEW_AUTHORITY}{PREVIEW_PATH}"):
             cleaned = f"{PREVIEW_SCHEME}://{cleaned}"
     return cleaned
+
+
+def build_uri(*, host: str, port: int, session_id: str, token: str,
+              project_id: str = "", project_name: str = "") -> str:
+    """Compose a preview URI (used by manual entry and tests)."""
+    query = urllib.parse.urlencode({
+        "host": host,
+        "port": str(port),
+        "session": session_id,
+        "token": token,
+        "protocol": str(PREVIEW_PROTOCOL_VERSION),
+        "renderer": str(RENDERER_PROTOCOL_VERSION),
+        "project": project_id,
+        "name": project_name,
+    })
+    return urllib.parse.urlunparse((
+        PREVIEW_SCHEME, PREVIEW_AUTHORITY, PREVIEW_PATH, "", query, ""))
+
+
+def build_uri_from_endpoint(endpoint) -> str:
+    return build_uri(
+        host=endpoint.host, port=endpoint.port, session_id=endpoint.session_id,
+        token=endpoint.token, project_id=endpoint.project_id,
+        project_name=endpoint.project_name)
 
 
 # ── validators (mirrors of the host's rules) ────────────────────────────────

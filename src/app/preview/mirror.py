@@ -1,21 +1,19 @@
 """The mirrored remote widget tree and its patch applier.
 
-The development server sends the *serialised* widget tree of the project
-being developed (the same JSON the generated Android renderer consumes)
-plus incremental patches as the developer edits Python. Pydash keeps that
-JSON as its source of truth — :class:`RemoteTree` — and rehydrates it into
+The development server sends the *serialised* widget tree of the project being
+developed (the same JSON the generated Android renderer consumes) plus
+incremental patches as the developer edits Python. Pydash keeps that JSON as
+its source of truth — :class:`RemoteTree` — and rehydrates it into
 :class:`MirrorWidget` nodes for the local render pipeline.
 
-Because :class:`MirrorWidget` serialises back to *exactly* the JSON the
-server sent (same ``type``, ``key``, ``style``, ``props``, ``events``),
-Pydash's own diff engine produces the same minimal view patches a full
-APK build would have applied — the preview is rendered by the real
-renderer, not a re-implementation.
+Because :class:`MirrorWidget` serialises back to *exactly* the JSON the server
+sent (same ``type``, ``key``, ``style``, ``props``, ``events``), Pydash's own
+diff engine produces the same minimal view patches a full APK build would have
+applied — the preview is rendered by the real renderer, not a re-implementation.
 
-Patch semantics mirror ``ViewFactory.applyPatch`` from the generated
-Android layer: ``create`` inserts at an index, ``delete`` removes,
-``move`` re-inserts, ``replace`` swaps a subtree in place and ``update``
-merges changed ``props``/``style``.
+Patch semantics mirror ``pydrud.core.diff`` (``create``/``update``/``delete``/
+``move``/``replace``) and the native ``ViewFactory.applyPatch`` that consumes
+them.
 """
 
 from __future__ import annotations
@@ -26,12 +24,29 @@ from typing import Any, Callable, Optional
 
 from pydrud import Widget
 
-__all__ = ["MirrorApplyError", "MirrorWidget", "RemoteTree"]
+__all__ = [
+    "MirrorApplyError", "MirrorWidget", "RemoteTree", "mirror_key", "remote_key",
+]
 
-#: Node fields the renderer reads. Everything except ``children`` (which is
-#: mirrored structurally) is carried verbatim.
-_NODE_FIELDS = ("type", "key", "style", "expand", "visible", "tooltip",
-                "has_events", "events", "props")
+#: Every mirrored node is re-keyed into this namespace before it enters the
+#: local widget tree. The remote project is an ordinary Pydrud app, so its tree
+#: carries framework keys — the page root ``_page``, a Scaffold's ``_body`` /
+#: ``_stack`` and friends — that would collide with Pydash's own page root and
+#: shell internals and make ``validate_tree_keys`` reject the tree. Prefixing
+#: keeps the two key spaces disjoint while leaving the ``RemoteTree`` (which
+#: the dev server patches by its own keys) untouched.
+_REMOTE_PREFIX = "pdremote_"
+
+
+def mirror_key(key: str) -> str:
+    """The collision-free local key for a remote node key."""
+    return _REMOTE_PREFIX + str(key or "")
+
+
+def remote_key(local_key: str) -> str:
+    """The dev project's key behind a mirrored (prefixed) local key."""
+    text = str(local_key or "")
+    return text[len(_REMOTE_PREFIX):] if text.startswith(_REMOTE_PREFIX) else text
 
 
 class MirrorApplyError(RuntimeError):
@@ -49,49 +64,62 @@ class MirrorApplyError(RuntimeError):
 class MirrorWidget(Widget):
     """A live Widget wrapping one node of the remote tree.
 
-    * ``key`` is the remote key — events dispatched by the local renderer
-      therefore arrive with the key the *server* expects;
+    * ``key`` is the remote key *namespaced* by :func:`mirror_key`, so it can
+      never collide with Pydash's own keys; :meth:`remote_key` recovers the
+      key the dev server dispatches events and patches by;
     * ``_widget_type`` matches the remote type so the local diff engine
       produces ``update`` patches instead of replacing the view;
-    * every remote event name is bound to a forwarding handler.
-
-    The remote JSON is emitted verbatim by :meth:`to_dict`.
+    * every remote event name is bound to a forwarding handler;
+    * :meth:`_serialise_self` re-emits the remote node verbatim.
     """
 
     def __init__(self, node: dict, *, on_event: Optional[Callable] = None):
         node = _validated_node(node)
         self._node = node
         self._on_event = on_event
-        # Remote keys stay untouched: the dev machine dispatches events and
-        # patches by these keys. Pydash's own chrome uses the ``pd_`` prefix
-        # so the two key spaces never collide.
-        key = str(node.get("key") or "")
-        super().__init__(key=key)
+        self._remote_key = str(node.get("key") or "")
+        super().__init__(key=mirror_key(self._remote_key))
         self._widget_type = str(node.get("type") or "Widget")
         self._auto_key = False
         self.style = dict(node.get("style") or {})
         self.expand = node.get("expand")
         self.visible = node.get("visible", True)
         self.tooltip = node.get("tooltip")
+        self.semantics = node.get("semantics")
         for name in (node.get("events") or []):
             name = str(name)
             if on_event is not None:
-                self.event_handlers[name] = \
-                    (lambda event, _name=name: on_event(_name, event))
+                self.event_handlers[name] = (
+                    lambda event, _name=name: on_event(_name, event))
         self.children = [MirrorWidget(child, on_event=on_event)
                          for child in (node.get("children") or [])]
 
     # ── serialisation ─────────────────────────────────────────────────────
 
     def _serialise_props(self) -> dict:
-        return dict(self._node.get("props") or {})
+        return copy.deepcopy(self._node.get("props") or {})
 
-    def to_dict(self) -> dict:
-        """Return the remote node exactly as the server sent it."""
-        return copy.deepcopy(self._node)
+    def _serialise_self(self) -> dict:
+        """The remote node exactly as the server sent it (children filled in)."""
+        node = self._node
+        return {
+            "type": str(node.get("type") or "Widget"),
+            "key": self.key,
+            "style": copy.deepcopy(node.get("style") or {}),
+            "expand": node.get("expand"),
+            "visible": node.get("visible", True),
+            "tooltip": node.get("tooltip"),
+            "semantics": node.get("semantics"),
+            "has_events": bool(self.event_handlers),
+            "events": (sorted(self.event_handlers.keys())
+                       or list(node.get("events") or [])),
+            "props": copy.deepcopy(node.get("props") or {}),
+            "children": [],
+        }
 
     def remote_key(self) -> str:
-        return str(self._node.get("key") or "")
+        """The dev server's key for this node (without the local prefix)."""
+        return self._remote_key
 
 
 def _validated_node(node: Any) -> dict:
@@ -104,12 +132,23 @@ def _validated_node(node: Any) -> dict:
     return node
 
 
+#: ``update`` prop keys the renderer treats as node metadata, not widget props.
+_META_KEYS = {
+    "_events": "events",
+    "_has_events": "has_events",
+    "_expand": "expand",
+    "_visible": "visible",
+    "_tooltip": "tooltip",
+    "_semantics": "semantics",
+}
+
+
 class RemoteTree:
     """Thread-safe mirror of the remote page, updated by render transactions.
 
-    The reader thread of the socket client applies snapshots and patches
-    here; the UI thread reads :meth:`snapshot_json` when rebuilding the
-    preview screen. A lock keeps the two from interleaving.
+    The reader thread of the socket client applies snapshots and patches here;
+    the UI thread reads :meth:`snapshot_json` when rebuilding the preview
+    screen. A lock keeps the two from interleaving.
     """
 
     def __init__(self):
@@ -140,8 +179,8 @@ class RemoteTree:
         """Apply one render transaction; returns the number of patch ops.
 
         Raises :class:`MirrorApplyError` when the transaction cannot be
-        applied; the caller should then NACK so the server resends a
-        full snapshot.
+        applied; the caller should then NACK so the server resends a full
+        snapshot.
         """
         with self._lock:
             if kind == "snapshot":
@@ -228,15 +267,30 @@ class RemoteTree:
             node = self._find(key)
             if node is None:
                 raise MirrorApplyError(f"update: unknown key {key!r}")
-            props = patch.get("props")
-            if isinstance(props, dict):
-                node.setdefault("props", {}).update(copy.deepcopy(props))
-            style = patch.get("style")
-            if isinstance(style, dict):
-                node.setdefault("style", {}).update(copy.deepcopy(style))
+            self._apply_update(node, patch)
             return
 
         raise MirrorApplyError(f"unknown patch op {op!r}")
+
+    @staticmethod
+    def _apply_update(node: dict, patch: dict) -> None:
+        props = patch.get("props")
+        if isinstance(props, dict):
+            target = node.setdefault("props", {})
+            for name, value in props.items():
+                meta = _META_KEYS.get(name)
+                if meta is not None:
+                    node[meta] = value
+                else:
+                    target[name] = value
+        style = patch.get("style")
+        if isinstance(style, dict):
+            target = node.setdefault("style", {})
+            for name, value in style.items():
+                if value is None:
+                    target.pop(name, None)
+                else:
+                    target[name] = value
 
     # ── tree walking ──────────────────────────────────────────────────────
 

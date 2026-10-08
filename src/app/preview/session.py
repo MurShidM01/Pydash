@@ -1,23 +1,22 @@
 """The preview session manager — Pydash's connection state machine.
 
-One module-level :data:`session` instance owns the whole preview
-lifecycle:
+One module-level :data:`session` instance owns the whole preview lifecycle:
 
-* :meth:`connect` from a scanned/entered endpoint — handshake, first
-  snapshot, live updates;
+* :meth:`connect` from a scanned/entered endpoint — handshake, first snapshot,
+  live updates;
 * auto-reconnect with capped backoff when the link drops unexpectedly;
 * :meth:`disconnect` — clean shutdown that restores Pydash's own theme;
-* statistics (revision, snapshots, patches, events, last sync) surfaced
-  by the Home dashboard and the preview header.
+* statistics (revision, snapshots, patches, events, last sync) surfaced by the
+  Home dashboard and the preview header.
 
 State changes are published through the reactive ``State`` objects in
-:mod:`app.state`, and every UI-visible mutation is marshalled onto the
-app's event-loop thread via :func:`app.runtime.on_ui`.
+:mod:`app.state`, and every UI-visible mutation is marshalled onto the app's
+UI thread via :func:`app.runtime.on_ui`.
 """
 
 from __future__ import annotations
 
-import time
+import threading
 from typing import Optional
 
 from pydrud.core.responsive import MediaQuery
@@ -35,7 +34,7 @@ from app.preview.models import (
     ServerInfo,
     SessionStats,
 )
-from app.runtime import on_ui, refresh
+from app.runtime import after, on_ui, refresh
 from app.state import auto_reconnect, bump, haptics_enabled, last_endpoint
 
 __all__ = ["PreviewSession", "session"]
@@ -56,14 +55,29 @@ class PreviewSession:
         self.error_code: Optional[str] = None
         self.reconnect_attempt = 0
 
-        #: Set while connected so the app restores its own look after a
-        #: preview session re-themed the native layer.
+        #: Set while connected so the app restores its own look after a preview
+        #: session re-themed the native layer.
         self.theme_applied_by_remote = False
         self.remote_title: str = ""
 
+        #: True once the session has been live at least once, so a later failure
+        #: is a *drop* (the dev server went away) rather than a bad scan.
+        self.was_live = False
+        #: True when a live session dropped and could not be re-established;
+        #: the preview screen turns this into the "not responding" dialog.
+        self.dropped = False
+
         #: Callables invoked (on the caller's thread) after a disconnect.
-        #: The renderer registers a hook that restores Pydash's own look.
         self.on_disconnect_hooks: list = []
+        #: Callables invoked (on the UI thread) after every state change, with
+        #: the new state string. The connect flow uses this to resolve.
+        self.on_state_hooks: list = []
+
+        #: Coalesces the UI rebuilds driven by render transactions: while a
+        #: rebuild is queued, further transactions only advance the mirrored
+        #: tree (and the counters), never the queue.
+        self._refresh_pending = False
+        self._refresh_lock = threading.Lock()
 
         self._closing = False
 
@@ -101,8 +115,8 @@ class PreviewSession:
     def connect(self, endpoint: Endpoint) -> None:
         """Open (or replace) a preview session from *endpoint*.
 
-        Returns immediately; the connection work happens on a daemon
-        thread and progress lands in the reactive state.
+        Returns immediately; the connection work happens on a daemon thread and
+        progress lands in the reactive state.
         """
         if self.is_busy:
             return
@@ -112,12 +126,8 @@ class PreviewSession:
         self.error_code = None
         self.reconnect_attempt = 0
         self.remote_title = ""
-        last_endpoint.value = {
-            "host": endpoint.host, "port": endpoint.port,
-            "session_id": endpoint.session_id, "token": endpoint.token,
-            "project_id": endpoint.project_id,
-            "project_name": endpoint.project_name,
-        }
+        self.dropped = False
+        last_endpoint.value = endpoint.as_dict()
         self._spawn_connect(initial=True)
 
     def reconnect(self) -> None:
@@ -127,11 +137,10 @@ class PreviewSession:
         self.error = None
         self.error_code = None
         self.reconnect_attempt = 0
+        self.dropped = False
         self._spawn_connect(initial=True)
 
     def _spawn_connect(self, *, initial: bool) -> None:
-        import threading
-
         def worker():
             try:
                 self._run_client()
@@ -153,14 +162,33 @@ class PreviewSession:
             self.tree,
             on_state=self._on_client_state,
             on_transaction=self._on_transaction,
-            on_event=self._on_remote_event,
             on_command=self._on_remote_command,
             on_disconnect=self._on_link_lost,
         )
         self.client = client
         self.server = client.connect(metrics=_current_metrics())
+        self.was_live = True
+        self.dropped = False
         self._set_state(ConnectionState.CONNECTED)
         self.reconnect_attempt = 0
+        self._remember_recent()
+
+    def _remember_recent(self) -> None:
+        """Add this endpoint to the recent-apps list on a successful connect.
+
+        Done here — at the one place every entry point (scan, pasted URL, a
+        recent row, a deep link) ends up — so the list is complete no matter
+        how the session was started. Marshalled onto the UI thread because it
+        touches reactive state and the storage service.
+        """
+        endpoint = self.endpoint
+        if endpoint is None:
+            return
+        try:
+            from app import recents
+        except Exception:  # pragma: no cover - import is cheap and safe
+            return
+        on_ui(recents.remember, endpoint)
 
     # ── disconnecting ─────────────────────────────────────────────────────
 
@@ -173,6 +201,8 @@ class PreviewSession:
         self.server = None
         self.remote_title = ""
         self.reconnect_attempt = 0
+        self.was_live = False
+        self.dropped = False
         self._set_state(ConnectionState.DISCONNECTED, error=reason)
         self._closing = False
         for hook in list(self.on_disconnect_hooks):
@@ -195,25 +225,39 @@ class PreviewSession:
             self._set_state(ConnectionState.HANDSHAKING)
 
     def _on_transaction(self, kind: str, ops: int) -> None:
-        def apply_update():
-            self.stats.mark_sync(kind, ops)
-            self.state = ConnectionState.CONNECTED
-            bump()
-            refresh()
-        on_ui(apply_update)
+        """Record a render transaction, coalescing bursts into one rebuild.
 
-    def _on_remote_event(self, kind: str, key: str, data: dict) -> None:
-        # Reserved for future client-side reactions to remote events.
-        pass
+        A project running an animation loop (the Heartbeat starter, a chart, a
+        spinner) emits a transaction every frame. Queuing a UI rebuild for each
+        one floods the app's single, bounded UI queue and eventually makes
+        ``run_on_ui`` raise ``queue.Full`` on the reader thread — which tore
+        the session down and left the preview blank the moment a button started
+        an animation. Only the *newest* tree is ever displayed, so a rebuild
+        that is already in flight absorbs any further transactions: the flag is
+        cleared as the flush begins and the next transaction schedules the next
+        flush. The counters still advance for every transaction.
+        """
+        self.stats.mark_sync(kind, ops)
+        with self._refresh_lock:
+            if self._refresh_pending:
+                return
+            self._refresh_pending = True
+        on_ui(self._flush_transactions)
+
+    def _flush_transactions(self) -> None:
+        """Rebuild the preview from the latest mirrored tree (UI thread)."""
+        with self._refresh_lock:
+            self._refresh_pending = False
+        self.state = ConnectionState.CONNECTED
+        bump()
+        refresh()
 
     def _on_remote_command(self, message: dict) -> None:
         """Handle one page command from the development server.
 
-        Called on the client's reader thread for everything that is not a
-        render transaction: theme pushes, toasts, snackbars, dialogs,
-        native service calls, back results… The renderer layer owns the
-        semantics; it is imported lazily because it already imports this
-        module (for the :data:`session` singleton) at module level.
+        Called on the client's reader thread for everything that is not a render
+        transaction: theme pushes, toasts, snackbars, dialogs, native service
+        calls, back results… The renderer layer owns the semantics.
         """
         from app.preview.renderer import handle_remote_command
         handle_remote_command(message)
@@ -229,10 +273,12 @@ class PreviewSession:
         if self._closing:
             return
         if initial:
-            # The very first connection never succeeded — surface it.
             self._set_state(ConnectionState.FAILED,
                             error=self._friendly_error(reason))
             return
+        # The link dropped after the session was live: this is the dev server
+        # going away, which the preview screen reports as "not responding".
+        self.dropped = True
         if not auto_reconnect.value:
             self._set_state(ConnectionState.DISCONNECTED, error=reason)
             return
@@ -240,13 +286,12 @@ class PreviewSession:
         if self.reconnect_attempt > RECONNECT_MAX_ATTEMPTS:
             self._set_state(
                 ConnectionState.FAILED,
-                error="The development server stopped responding. "
-                      "Check that `pydrud dev` is still running.")
+                error="The development server stopped responding. Check that "
+                      "`pydrud dev` is still running.")
             return
         self._set_state(ConnectionState.RECONNECTING, error=reason)
         delay = min(RECONNECT_BASE_DELAY * (2 ** (self.reconnect_attempt - 1)),
                     RECONNECT_MAX_DELAY)
-        from app.runtime import after
 
         def retry():
             if self.state != ConnectionState.RECONNECTING:
@@ -260,14 +305,14 @@ class PreviewSession:
         text = str(reason or "connection failed")
         if "refused" in text:
             return ("The development server refused the connection. Is "
-                    "`pydrud dev` still running, and are both devices on "
-                    "the same network?")
+                    "`pydrud dev` still running, and are both devices on the "
+                    "same network?")
         if "timed out" in text or "timeout" in text:
-            return ("Could not reach the development server in time. Check "
-                    "the network and any firewall on port 8597.")
+            return ("Could not reach the development server in time. Check the "
+                    "network and any firewall on port 8597.")
         if "No route to host" in text or "unreachable" in text:
-            return ("The development machine is unreachable. Both devices "
-                    "must be on the same Wi-Fi network.")
+            return ("The development machine is unreachable. Both devices must "
+                    "be on the same Wi-Fi network.")
         return text
 
     # ── state plumbing ────────────────────────────────────────────────────
@@ -280,6 +325,11 @@ class PreviewSession:
             self.error_code = code
             bump()
             refresh()
+            for hook in list(self.on_state_hooks):
+                try:
+                    hook(state)
+                except Exception:
+                    pass
         on_ui(publish)
 
     # ── haptics ───────────────────────────────────────────────────────────
@@ -294,10 +344,6 @@ class PreviewSession:
         page = app.page if app is not None else None
         if page is None:
             return
-
-        def tick(_result=None):
-            pass
-
         try:
             page.haptics.selection()
         except Exception:
@@ -307,8 +353,7 @@ class PreviewSession:
 def _current_metrics() -> dict:
     """The live window metrics, as the server's ``ready`` event expects."""
     try:
-        info = MediaQuery.info()
-        return dict(info.as_dict())
+        return dict(MediaQuery.of())
     except Exception:
         return {"width": 360, "height": 640, "density": 2.0}
 

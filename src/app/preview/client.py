@@ -1,25 +1,13 @@
-"""The preview socket client — Pydash's side of the ``pydrud dev`` protocol.
+"""The preview socket client — the client side of ``pydrud dev``.
 
-One :class:`PreviewClient` owns one TCP connection to the development
-server. The conversation is:
+Owns one TCP connection and one daemon reader thread. It performs the
+authenticated ``preview_hello`` / ``preview_welcome`` handshake, then speaks
+the renderer-v2 bridge protocol: it applies revisioned render transactions to
+the :class:`~app.preview.mirror.RemoteTree`, ACKs (or NACKs) each one, and
+forwards every other server command to the renderer.
 
-1. connect to ``host:port``;
-2. send ``preview_hello`` (protocol versions, session credentials,
-   renderer capabilities, device metrics, last known revision);
-3. read ``preview_welcome`` — or ``preview_reject`` and give up;
-4. send ``ready`` with live metrics, exactly like the native bridge does;
-5. from here on speak the regular Pydrud renderer protocol:
-
-   * server → client: ``theme`` pushes and revisioned
-     ``render_transaction`` frames (snapshots and patches), plus page
-     commands (toast, snackbar, dialogs, …) carrying a ``request_id``;
-   * client → server: ``render_ack`` / ``render_nack`` after applying a
-     transaction, UI events from the previewed widgets, ``metrics`` on
-     window changes, ``back`` presses and ``result`` replies for native
-     service calls executed on the device.
-
-Everything runs on a dedicated reader thread; callbacks are invoked there
-and must marshal onto the UI thread themselves (the session layer does).
+Everything that touches the UI is handed back through callbacks; the caller
+(:mod:`app.preview.session`) marshals those onto the app's UI thread.
 """
 
 from __future__ import annotations
@@ -29,32 +17,27 @@ import socket
 import threading
 from typing import Any, Callable, Optional
 
-from pydrud.core.protocol import (
-    MAX_FRAME_BYTES,
-    ProtocolError,
-    decode_envelope,
-    encode_envelope,
-)
-
 from app.config import (
     CLIENT_CAPABILITIES,
     CLIENT_NAME,
     CLIENT_PLATFORM,
-    APP_VERSION,
     CONNECT_TIMEOUT,
     HANDSHAKE_TIMEOUT,
     PREVIEW_PROTOCOL,
     PREVIEW_PROTOCOL_VERSION,
     RENDERER_PROTOCOL_VERSION,
 )
-from app.preview.models import Endpoint, ServerInfo
 from app.preview.mirror import MirrorApplyError, RemoteTree
+from app.preview.models import Endpoint, ServerInfo
 
 __all__ = ["PreviewClient", "PreviewHandshakeError"]
 
+#: A frame, including the newline, may not exceed this (mirrors the host).
+MAX_FRAME_BYTES = 2 * 1024 * 1024
 
-class PreviewHandshakeError(RuntimeError):
-    """The server refused the session (or the handshake was malformed)."""
+
+class PreviewHandshakeError(Exception):
+    """The server rejected the session or spoke an unknown protocol."""
 
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -63,7 +46,7 @@ class PreviewHandshakeError(RuntimeError):
 
 
 class PreviewClient:
-    """Speaks the preview protocol against one development server."""
+    """One live socket connection to a ``pydrud dev`` server."""
 
     def __init__(
         self,
@@ -72,392 +55,327 @@ class PreviewClient:
         *,
         on_state: Optional[Callable[[str, Optional[str]], None]] = None,
         on_transaction: Optional[Callable[[str, int], None]] = None,
-        on_event: Optional[Callable[[str, str, dict], None]] = None,
         on_command: Optional[Callable[[dict], None]] = None,
         on_disconnect: Optional[Callable[[Optional[str]], None]] = None,
     ):
         self.endpoint = endpoint
         self.tree = tree
-        self._on_state = on_state or (lambda state, detail: None)
-        self._on_transaction = on_transaction or (lambda kind, ops: None)
-        self._on_event = on_event or (lambda kind, key, data: None)
-        self._on_command = on_command or (lambda message: None)
-        self._on_disconnect = on_disconnect or (lambda reason: None)
+        self._on_state = on_state
+        self._on_transaction = on_transaction
+        self._on_command = on_command
+        self._on_disconnect = on_disconnect
 
-        self.server: Optional[ServerInfo] = None
         self._sock: Optional[socket.socket] = None
         self._send_lock = threading.Lock()
         self._running = threading.Event()
-        self._connected = threading.Event()
         self._reader: Optional[threading.Thread] = None
+        self._closed = False
+        self.server: Optional[ServerInfo] = None
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
-    @property
-    def is_connected(self) -> bool:
-        return self._connected.is_set()
-
     def connect(self, *, metrics: Optional[dict] = None) -> ServerInfo:
-        """Connect, handshake and start the reader loop.
+        """Connect, authenticate and start the reader. Returns server info.
 
-        Returns the parsed ``preview_welcome`` payload. Raises
-        :class:`PreviewHandshakeError` when the server rejects the session
-        and :class:`OSError`/``socket.timeout`` for network failures.
+        Blocking — call it on a worker thread.
         """
-        self._running.set()
-        self._emit_state("connecting")
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._emit_state("connecting", None)
+        family = socket.AF_INET
+        sock = socket.socket(family, socket.SOCK_STREAM)
         sock.settimeout(CONNECT_TIMEOUT)
         try:
-            sock.connect((self.endpoint.host, self.endpoint.port))
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            sock.connect((self.endpoint.host, int(self.endpoint.port)))
         except OSError:
             sock.close()
             raise
-
         self._sock = sock
-        self._connected.set()  # the handshake itself sends hello + ready
-        try:
-            self._emit_state("handshaking")
-            self._handshake(sock, metrics or {})
-        except Exception:
-            self._connected.clear()
-            self._close_socket()
-            raise
+        self._emit_state("handshaking", None)
 
+        self._send_raw(self._hello(metrics or {}))
+        welcome = self._read_handshake_frame()
+        self.server = self._validate_welcome(welcome)
+
+        # Announce ourselves and hand the server our live window metrics so it
+        # re-renders the layout for the real screen.
+        self._send_event_raw({
+            "type": "ready",
+            "key": "",
+            "data": {**(metrics or {}), "capabilities": dict(CLIENT_CAPABILITIES)},
+        })
+
+        self._running.set()
         self._reader = threading.Thread(
-            target=self._read_loop, args=(sock,), daemon=True,
-            name="pydash-preview-client")
+            target=self._read_loop, daemon=True, name="pydash-preview-reader")
         self._reader.start()
-        return self.server or ServerInfo()
+        return self.server
 
-    def disconnect(self, reason: Optional[str] = None) -> None:
-        """Close the session from our side."""
+    def disconnect(self, reason: Optional[str] = "closed by user") -> None:
+        """Close the connection and stop the reader (idempotent)."""
+        self._closed = True
         self._running.clear()
-        self._connected.clear()
-        self._close_socket()
-        self._on_disconnect(reason)
+        sock, self._sock = self._sock, None
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
 
-    # ── handshake ─────────────────────────────────────────────────────────
+    # ── client → server ───────────────────────────────────────────────────
 
-    def _handshake(self, sock: socket.socket, metrics: dict) -> None:
-        hello = {
+    def send_event(self, key: str, event: str, value: Any = None) -> None:
+        """Forward a UI event (click/change/submit/scroll/…) to the server."""
+        data = {} if value is None else {"value": value}
+        self._send_event_raw({"type": str(event), "key": str(key), "data": data})
+
+    def send_back(self) -> None:
+        self._send_event_raw({"type": "back", "key": "", "data": {}})
+
+    def send_metrics(self, metrics: dict) -> None:
+        self._send_event_raw({"type": "metrics", "key": "", "data": dict(metrics)})
+
+    def send_result(self, request_id: Any, ok: bool, *,
+                    value: Any = None, error: Any = None) -> None:
+        """Answer a service command that carried a request ``id``."""
+        data: dict = {"id": request_id, "ok": bool(ok)}
+        if ok:
+            data["value"] = value
+        else:
+            data["error"] = error if error is not None else "unavailable"
+        self._send_event_raw({"type": "result", "key": "", "data": data})
+
+    # ── handshake helpers ─────────────────────────────────────────────────
+
+    def _hello(self, metrics: dict) -> dict:
+        return {
             "type": "preview_hello",
             "protocol": PREVIEW_PROTOCOL,
             "protocol_version": PREVIEW_PROTOCOL_VERSION,
             "renderer_protocol_version": RENDERER_PROTOCOL_VERSION,
             "session_id": self.endpoint.session_id,
             "token": self.endpoint.token,
-            "capabilities": dict(CLIENT_CAPABILITIES),
-            "metrics": _clean_metrics(metrics),
-            "last_revision": self.tree.revision,
             "client": {
                 "name": CLIENT_NAME,
-                "version": APP_VERSION,
+                "version": _client_version(),
                 "platform": CLIENT_PLATFORM,
             },
+            "capabilities": dict(CLIENT_CAPABILITIES),
+            "last_revision": int(self.tree.revision),
+            "metrics": _clean_metrics(metrics),
         }
-        _send_frame(sock, hello)
 
-        sock.settimeout(HANDSHAKE_TIMEOUT)
-        raw = _read_frame(sock)
-        try:
-            reply = decode_envelope(raw)
-        except ProtocolError as exc:
-            raise PreviewHandshakeError(
-                "invalid_welcome", f"Malformed server reply: {exc}") from exc
-        if reply is None:
-            raise PreviewHandshakeError(
-                "invalid_welcome", "Empty server reply.")
-        kind = reply.get("type")
-
+    def _validate_welcome(self, message: dict) -> ServerInfo:
+        kind = message.get("type")
         if kind == "preview_reject":
             raise PreviewHandshakeError(
-                str(reply.get("code") or "rejected"),
-                str(reply.get("message") or "The server refused the session."))
+                str(message.get("code") or "rejected"),
+                str(message.get("message") or "the server rejected the session"))
         if kind != "preview_welcome":
             raise PreviewHandshakeError(
-                "invalid_welcome",
-                f"Unexpected first frame {kind!r} from the server.")
-
-        version = int(reply.get("protocol_version", 0) or 0)
-        if version != PREVIEW_PROTOCOL_VERSION:
+                "invalid_welcome", "the server did not send preview_welcome")
+        if message.get("protocol") != PREVIEW_PROTOCOL:
             raise PreviewHandshakeError(
-                "unsupported_version",
-                f"Server speaks preview protocol {version}; Pydash speaks "
-                f"{PREVIEW_PROTOCOL_VERSION}.")
-        renderer = int(reply.get("renderer_protocol_version", 0) or 0)
-        if renderer != RENDERER_PROTOCOL_VERSION:
+                "unsupported_protocol", "unknown preview protocol")
+        if int(message.get("protocol_version", -1)) != PREVIEW_PROTOCOL_VERSION:
             raise PreviewHandshakeError(
-                "unsupported_renderer",
-                f"Server speaks renderer protocol {renderer}; Pydash speaks "
-                f"{RENDERER_PROTOCOL_VERSION}.")
-
-        project = reply.get("project") or {}
-        self.server = ServerInfo(
-            project_id=str(project.get("id") or self.endpoint.project_id),
-            project_name=str(project.get("name") or self.endpoint.project_name),
-            session_id=str(reply.get("session_id") or self.endpoint.session_id),
-            port=int(reply.get("port") or self.endpoint.port),
-            capabilities=dict(reply.get("capabilities") or {}),
-            limits=dict(reply.get("limits") or {}),
+                "unsupported_version", "unsupported preview protocol version")
+        if int(message.get("renderer_protocol_version", -1)) \
+                != RENDERER_PROTOCOL_VERSION:
+            raise PreviewHandshakeError(
+                "unsupported_renderer", "unsupported renderer protocol version")
+        project = message.get("project") or {}
+        return ServerInfo(
+            project_id=str(project.get("id") or ""),
+            project_name=str(project.get("name") or ""),
+            session_id=str(message.get("session_id") or ""),
+            port=int(message.get("port") or 0),
+            capabilities=dict(message.get("capabilities") or {}),
+            limits=dict(message.get("limits") or {}),
         )
 
-        # Mirror the native bridge: announce real metrics so the project
-        # lays itself out for this exact screen, then the server re-renders.
-        sock.settimeout(None)
-        self.send_event("ready", "", {
-            **_clean_metrics(metrics),
-            "protocol_version": RENDERER_PROTOCOL_VERSION,
-            "capabilities": dict(CLIENT_CAPABILITIES),
-        })
+    # ── reader ────────────────────────────────────────────────────────────
 
-    # ── reader loop ───────────────────────────────────────────────────────
-
-    def _read_loop(self, sock: socket.socket) -> None:
-        buffer = b""
+    def _read_loop(self) -> None:
+        sock = self._sock
+        reason: Optional[str] = None
+        buffer = bytearray()
         try:
-            while self._running.is_set():
-                try:
-                    chunk = sock.recv(65536)
-                except OSError:
-                    break
+            while self._running.is_set() and sock is not None:
+                chunk = sock.recv(65536)
                 if not chunk:
+                    reason = "the development server closed the connection"
                     break
-                buffer += chunk
-                if len(buffer) > MAX_FRAME_BYTES and b"\n" not in buffer:
-                    self._protocol_failure(
-                        f"bridge frame exceeds {MAX_FRAME_BYTES} bytes")
+                buffer.extend(chunk)
+                if len(buffer) > MAX_FRAME_BYTES:
+                    reason = "the server sent an oversized frame"
                     break
-                while b"\n" in buffer:
-                    line, buffer = buffer.split(b"\n", 1)
-                    if len(line) + 1 > MAX_FRAME_BYTES:
-                        self._protocol_failure(
-                            f"bridge frame exceeds {MAX_FRAME_BYTES} bytes")
-                        return
-                    text = line.decode("utf-8", errors="replace").strip()
-                    if not text:
-                        continue
-                    if not self._handle_line(text):
-                        return
-        except Exception:
-            pass
+                while True:
+                    newline = buffer.find(b"\n")
+                    if newline < 0:
+                        break
+                    raw = bytes(buffer[:newline])
+                    del buffer[:newline + 1]
+                    self._handle_frame(raw)
+        except OSError as exc:
+            reason = str(exc)
+        except Exception as exc:  # defensive: never kill the reader silently
+            reason = str(exc)
         finally:
-            was_connected = self._connected.is_set()
-            self._connected.clear()
-            if self._sock is sock:
-                self._sock = None
-            try:
-                sock.close()
-            except OSError:
-                pass
-            if self._running.is_set() and was_connected:
-                # Unexpected loss — the session layer decides about retries.
-                self._on_disconnect(None)
+            self._running.clear()
+            if not self._closed and self._on_disconnect is not None:
+                self._on_disconnect(reason)
 
-    def _handle_line(self, text: str) -> bool:
-        """Route one server frame. Returns False to stop the reader."""
+    def _handle_frame(self, raw: bytes) -> None:
         try:
-            message = decode_envelope(text)
-        except ProtocolError as exc:
-            self._protocol_failure(f"invalid JSON frame: {exc}")
-            return False
-        if message is None:
-            return True
-
+            message = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return
+        if not isinstance(message, dict):
+            return
         cmd = message.get("cmd")
         if cmd == "render_transaction":
             self._handle_transaction(message)
-            return True
-        # Everything else (theme, toast, snackbar, dialogs with a
-        # request_id, back_result, …) is handled by the renderer layer.
-        try:
+        elif cmd:
+            if self._on_command is not None:
+                self._on_command(message)
+        elif self._on_command is not None:
             self._on_command(message)
-        except Exception:
-            pass
-        return True
-
-    # ── render transactions ───────────────────────────────────────────────
 
     def _handle_transaction(self, message: dict) -> None:
         tx_id = str(message.get("transaction_id") or "")
-        revision = _as_int(message.get("revision"), -1)
-        base = _as_int(message.get("base_revision"), -1)
         kind = str(message.get("kind") or "")
-
-        if not tx_id or revision < 0 or base < 0:
-            self._nack(tx_id, revision, "invalid_transaction")
+        revision = _int(message.get("revision"), 0)
+        base = _int(message.get("base_revision"), 0)
+        if _int(message.get("protocol_version"), RENDERER_PROTOCOL_VERSION) \
+                != RENDERER_PROTOCOL_VERSION:
+            self._nack(tx_id, revision, "unsupported_version",
+                       "renderer protocol version mismatch")
             return
-        version = _as_int(message.get("protocol_version"), 0)
-        if version != RENDERER_PROTOCOL_VERSION:
-            self._protocol_failure(
-                f"unsupported renderer protocol {version}")
-            self._nack(tx_id, revision, "unsupported_version")
-            return
-
-        payload: dict = {}
-        if kind == "snapshot":
-            payload = {"tree": message.get("tree")}
-        elif kind == "patch":
-            payload = {"patches": message.get("patches")}
-        else:
-            self._nack(tx_id, revision, "unknown_transaction_kind")
-            return
-
+        payload = {"tree": message.get("tree")} if kind == "snapshot" \
+            else {"patches": message.get("patches")}
         try:
             ops = self.tree.apply(revision=revision, base_revision=base,
                                   kind=kind, payload=payload)
-        except (MirrorApplyError, ValueError) as exc:
-            reason = getattr(exc, "reason", None) or str(exc)
-            if str(reason).startswith("stale_base_revision"):
-                reason = "stale_base_revision"
-            self._nack(tx_id, revision, reason)
+        except MirrorApplyError as exc:
+            self._nack(tx_id, revision, "stale_base" if "stale_base" in str(exc)
+                       else "apply_failed", str(exc))
             return
-
-        self._ack(tx_id, revision)
-        try:
-            self._on_transaction(kind, ops)
-        except Exception:
-            pass
-
-    def _ack(self, tx_id: str, revision: int) -> None:
-        self._send({
+        self._send_event_raw({
             "type": "render_ack",
             "key": "",
             "data": {"transaction_id": tx_id, "revision": revision},
         })
+        if self._on_transaction is not None:
+            try:
+                self._on_transaction(kind, ops)
+            except Exception:
+                # A UI-dispatch hiccup must never kill the reader: the tree is
+                # already applied and ACKed, and the next transaction refreshes
+                # the screen from the newest snapshot.
+                pass
 
-    def _nack(self, tx_id: str, revision: int, reason: str) -> None:
-        self._send({
+    def _nack(self, tx_id: str, revision: int, code: str, message: str) -> None:
+        self._send_event_raw({
             "type": "render_nack",
             "key": "",
             "data": {
                 "transaction_id": tx_id,
                 "revision": revision,
-                "native_revision": self.tree.revision,
-                "reason": reason,
+                "native_revision": int(self.tree.revision),
+                "code": code,
+                "message": message,
                 "recoverable": True,
             },
         })
 
-    # ── client → server ───────────────────────────────────────────────────
+    # ── wire helpers ──────────────────────────────────────────────────────
 
-    def send_event(self, kind: str, key: str, data: Optional[dict] = None) -> bool:
-        """Forward a UI event from the previewed project to the server."""
-        return self._send({
-            "type": str(kind),
-            "key": str(key),
-            "data": dict(data or {}),
-        })
-
-    def send_back(self) -> bool:
-        """Offer a hardware back press to the previewed project."""
-        return self.send_event("back", "")
-
-    def send_metrics(self, metrics: dict) -> bool:
-        """Tell the server the window changed (rotation, insets, …)."""
-        return self._send({
-            "type": "metrics", "key": "", "data": _clean_metrics(metrics),
-        })
-
-    def send_result(self, request_id: str, *, ok: bool,
-                    value: Any = None, error: Optional[str] = None) -> bool:
-        """Answer a native service call the previewed project requested."""
-        data: dict = {"request_id": str(request_id), "ok": bool(ok)}
-        if ok:
-            data["value"] = value
-        else:
-            data["error"] = str(error or "native call failed")
-        return self._send({"type": "result", "key": "", "data": data})
-
-    def _send(self, message: dict) -> bool:
+    def _read_handshake_frame(self) -> dict:
+        """Read exactly one newline-terminated frame (no over-read)."""
         sock = self._sock
-        if sock is None or not self._connected.is_set():
-            return False
+        assert sock is not None
+        frame = bytearray()
+        deadline_sock = sock
+        deadline_sock.settimeout(HANDSHAKE_TIMEOUT)
         try:
-            with self._send_lock:
-                sock.sendall(encode_envelope(message).encode("utf-8"))
-            return True
-        except (OSError, ProtocolError):
-            return False
-
-    # ── internals ─────────────────────────────────────────────────────────
-
-    def _emit_state(self, state: str) -> None:
+            while len(frame) <= MAX_FRAME_BYTES:
+                chunk = sock.recv(1)
+                if not chunk:
+                    raise PreviewHandshakeError(
+                        "connection_closed",
+                        "the server closed the connection during the handshake")
+                frame.extend(chunk)
+                if chunk == b"\n":
+                    break
+            else:
+                raise PreviewHandshakeError(
+                    "frame_too_large", "the welcome frame was too large")
+        finally:
+            try:
+                sock.settimeout(None)
+            except OSError:
+                pass
         try:
-            self._on_state(state, None)
-        except Exception:
-            pass
+            return json.loads(frame.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PreviewHandshakeError(
+                "invalid_welcome", "the welcome frame was not valid JSON") from exc
 
-    def _protocol_failure(self, reason: str) -> None:
-        self._on_command({
-            "cmd": "_pydash_protocol_error", "message": reason,
-        })
-
-    def _close_socket(self) -> None:
-        sock, self._sock = self._sock, None
+    def _send_raw(self, message: dict) -> None:
+        sock = self._sock
         if sock is None:
             return
-        try:
-            sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        try:
-            sock.close()
-        except OSError:
-            pass
+        encoded = _encode(message)
+        with self._send_lock:
+            try:
+                sock.sendall(encoded)
+            except OSError:
+                pass
+
+    def _send_event_raw(self, message: dict) -> None:
+        self._send_raw(message)
+
+    def _emit_state(self, state: str, detail: Optional[str]) -> None:
+        if self._on_state is not None:
+            self._on_state(state, detail)
 
 
-# ── frame helpers ───────────────────────────────────────────────────────────
+# ── module helpers ───────────────────────────────────────────────────────────
 
 
-def _read_frame(sock: socket.socket) -> str:
-    """Read one newline-terminated frame without over-buffering."""
-    frame = bytearray()
-    while len(frame) <= MAX_FRAME_BYTES:
-        chunk = sock.recv(1)
-        if not chunk:
-            raise ConnectionError("connection closed during handshake")
-        frame.extend(chunk)
-        if chunk == b"\n":
-            return frame.decode("utf-8")
-    raise PreviewHandshakeError(
-        "frame_too_large", f"handshake frame exceeds {MAX_FRAME_BYTES} bytes")
+def _encode(message: dict) -> bytes:
+    raw = json.dumps(message, separators=(",", ":"), ensure_ascii=False,
+                     default=str)
+    return (raw + "\n").encode("utf-8")
 
 
-def _send_frame(sock: socket.socket, message: dict) -> None:
-    sock.sendall(encode_envelope(message).encode("utf-8"))
-
-
-def _as_int(value, default: int) -> int:
-    """Coerce a JSON number to int without mistaking 0 for missing."""
-    if isinstance(value, bool) or value is None:
-        return default
+def _int(value: Any, default: int) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
         return default
 
 
+def _client_version() -> str:
+    from app.config import APP_VERSION
+    return APP_VERSION
+
+
+#: Metric fields the host understands; anything else is dropped before sending.
+_METRIC_FIELDS = (
+    "width", "height", "width_px", "height_px", "density", "dpi", "text_scale",
+    "orientation", "status_bar_height", "navigation_bar_height", "padding_top",
+    "padding_right", "padding_bottom", "padding_left", "keyboard_height",
+    "dark", "platform_version",
+)
+
+
 def _clean_metrics(metrics: dict) -> dict:
-    """Keep only the numeric/boolean metrics fields the server accepts."""
-    allowed = {
-        "width", "height", "width_px", "height_px", "density", "dpi",
-        "xdpi", "ydpi", "text_scale", "status_bar_height",
-        "navigation_bar_height", "padding_top", "padding_right",
-        "padding_bottom", "padding_left", "keyboard_height", "refresh_rate",
-        "smallest_width", "sdk",
-    }
-    out: dict = {}
-    for name in allowed:
-        if metrics.get(name) is not None:
-            try:
-                out[name] = float(metrics[name])
-            except (TypeError, ValueError):
-                continue
-    if metrics.get("dark") is not None:
-        out["dark"] = bool(metrics["dark"])
-    for name in ("orientation", "ui_mode", "model"):
-        if metrics.get(name) is not None:
-            out[name] = str(metrics[name])
-    return out
+    cleaned: dict = {}
+    for name in _METRIC_FIELDS:
+        if name in metrics and metrics[name] is not None:
+            cleaned[name] = metrics[name]
+    return cleaned
