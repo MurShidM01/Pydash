@@ -34,7 +34,7 @@ DANGER = "#FFDC2626"
 
 # ── Project links ────────────────────────────────────────────────────────────
 PYDRUD_REPO = "https://github.com/MurShidM01/Pydrud"
-PYDASH_REPO = "https://github.com/MurShidM01/Pydrud-Apps"
+PYDASH_REPO = "https://github.com/MurShidM01/Pydash"
 PYDRUD_DOCS = "https://github.com/MurShidM01/Pydrud#readme"
 
 # ── Framework versions (reported in Settings → About) ────────────────────────
