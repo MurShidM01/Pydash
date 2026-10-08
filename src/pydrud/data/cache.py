@@ -32,7 +32,6 @@ from typing import Any, Callable, Optional
 
 _MISSING = object()
 
-
 class Cache:
     """A persistent key/value cache with expiry and an LRU byte budget."""
 
@@ -48,13 +47,10 @@ class Cache:
         self.hits = 0
         self.misses = 0
 
-                                                                           
-
     def set(self, key: str, value: Any, *, ttl: Optional[float] = None) -> Any:
         """Store *value* (JSON-serialisable or bytes). Returns the value."""
         ttl = self.default_ttl if ttl is None else ttl
-                                                                          
-                                                             
+
         expires = None if ttl is None else time.time() + float(ttl)
         is_bytes = isinstance(value, (bytes, bytearray))
         payload = bytes(value) if is_bytes else json.dumps(value).encode()
@@ -143,8 +139,6 @@ class Cache:
                 self._save_index()
             return len(stale)
 
-                                                                           
-
     def keys(self) -> list[str]:
         with self._lock:
             return sorted(self._index)
@@ -168,8 +162,6 @@ class Cache:
                 "hits": self.hits, "misses": self.misses,
                 "directory": self.directory}
 
-                                                                           
-
     def _path_for(self, key: str) -> str:
         digest = hashlib.sha1(key.encode()).hexdigest()[:20]
         return os.path.join(self.directory, f"{digest}.bin")
@@ -185,7 +177,7 @@ class Cache:
     def _evict_if_needed(self) -> None:
         if self.size <= self.max_bytes:
             return
-                                    
+
         for key, _ in sorted(self._index.items(),
                              key=lambda kv: kv[1].get("used") or 0):
             self._remove(key)
@@ -195,7 +187,7 @@ class Cache:
 
     def _load_index(self) -> dict:
         try:
-            with open(self._index_path) as handle:
+            with open(self._index_path, encoding="utf-8") as handle:
                 data = json.load(handle)
             return data if isinstance(data, dict) else {}
         except (OSError, ValueError):
@@ -204,7 +196,7 @@ class Cache:
     def _save_index(self) -> None:
         tmp = self._index_path + ".tmp"
         try:
-            with open(tmp, "w") as handle:
+            with open(tmp, "w", encoding="utf-8") as handle:
                 json.dump(self._index, handle)
             os.replace(tmp, self._index_path)
         except OSError:
@@ -219,7 +211,6 @@ class Cache:
     def __repr__(self) -> str:
         return (f"Cache({self.directory!r}, entries={len(self._index)}, "
                 f"bytes={self.size})")
-
 
 def cached(cache: Cache, key_template: str, *, ttl: Optional[float] = None):
     """Memoise a function's result in *cache*.

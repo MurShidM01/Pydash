@@ -23,9 +23,11 @@ pixels instead.
 
 from __future__ import annotations
 
+import inspect
 import math
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, NamedTuple, Optional, Sequence
 
+from pydrud.core.responsive import MediaQuery
 from pydrud.widgets.base import Widget
 from pydrud.widgets.theme import Colors
 
@@ -33,6 +35,46 @@ CAPS = ("butt", "round", "square")
 JOINS = ("miter", "round", "bevel")
 ALIGNS = ("left", "center", "right")
 
+WEIGHTS = {"thin": 100, "extralight": 200, "ultralight": 200, "light": 300,
+           "normal": 400, "regular": 400, "medium": 500, "semibold": 600,
+           "demibold": 600, "bold": 700, "extrabold": 800, "black": 900,
+           "heavy": 900}
+
+class Size(NamedTuple):
+    """The canvas size in dp — also unpacks as ``(width, height)``."""
+
+    width: float
+    height: float
+
+def _font_weight(weight: Any) -> int:
+    if isinstance(weight, bool):
+        return 700 if weight else 400
+    if isinstance(weight, (int, float)):
+        return int(weight)
+    text = str(weight).strip().lower().replace("-", "").replace("_", "")
+    if text in WEIGHTS:
+        return WEIGHTS[text]
+    if text.isdigit():
+        return int(text)
+    raise ValueError(f"weight must be a number or one of "
+                     f"{sorted(WEIGHTS)}, got {weight!r}")
+
+def _resolve_dimension(value: Any, available: float) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if value is None or isinstance(value, bool):
+        return float(available)
+    text = str(value).strip().lower()
+    if text.endswith("%"):
+        text = text[:-1]
+        try:
+            return float(available) * float(text) / 100.0
+        except ValueError:
+            return float(available)
+    try:
+        return float(text)
+    except ValueError:
+        return float(available)
 
 class Paint:
     """Reusable stroke/fill settings.
@@ -89,7 +131,6 @@ class Paint:
 
     def __repr__(self) -> str:
         return f"Paint({self.color}, width={self.width}, fill={self.fill})"
-
 
 class Path:
     """A sequence of move/line/curve segments, drawn with ``canvas.path()``."""
@@ -157,12 +198,33 @@ class Path:
     def __repr__(self) -> str:
         return f"Path({len(self.ops)} ops)"
 
-
 class Canvas(Widget):
     """A view you draw on with Python calls.
 
     Every method returns ``self``, so drawing reads as a chain. Drawing
     commands are replayed on the device in the order they were issued.
+
+    ``on_draw`` is re-run on every rebuild with as many arguments as it
+    declares — ``(canvas)``, ``(canvas, size)`` or ``(canvas, w, h)``::
+
+        Canvas(on_draw=lambda c, w, h: c.line(0, 0, w, h), units="px")
+
+    ``size``/``w``/``h`` are dp (see :attr:`size`), so pixel-accurate
+    drawing no longer means guessing the layout size.
+
+    Painter contract
+    ----------------
+    ``on_draw`` runs once per build and its recorded commands are *frozen*
+    for that build, so a painter may safely read shared mutable state (the
+    game-loop pattern) — the diff compares the frozen frame against the next
+    frame and emits an update when it changes::
+
+        scene = {"x": 0.1}
+        Canvas(on_draw=lambda c: c.circle(scene["x"], 0.5, 0.05))
+        scene["x"] = 0.9        # next rebuild repaints at the new position
+
+    A painter that raises is logged, keeps whatever it drew and leaves the
+    exception on :attr:`last_draw_error`; it never takes down the rebuild.
     """
 
     _widget_type = "Canvas"
@@ -191,12 +253,52 @@ class Canvas(Widget):
         self.style.setdefault("height", height)
         if bg:
             self.style.setdefault("bg", bg)
-                                                                            
+
         self.on_draw = on_draw
         if on_draw is not None and not callable(on_draw):
             raise TypeError("on_draw must be callable")
 
-                                                                           
+        self._measured: Optional[Size] = None
+
+        self.last_draw_error: Optional[BaseException] = None
+
+    @property
+    def size(self) -> Size:
+        """The canvas size in dp, as a ``(width, height)`` named tuple.
+
+        Fixed sizes come from the style; ``"match"`` and percentages are
+        resolved against the live :class:`MediaQuery` metrics (a 360x640
+        phone when nothing is connected). :meth:`measure` pins exact
+        values when the real laid-out size is known.
+        """
+        if self._measured is not None:
+            return self._measured
+        available_w, available_h = MediaQuery.viewport()
+        width = _resolve_dimension(self.style.get("width"), available_w)
+        height = _resolve_dimension(self.style.get("height"), available_h)
+        return Size(max(width, 0.0), max(height, 0.0))
+
+    @property
+    def width(self) -> float:
+        """Canvas width in dp (see :attr:`size`)."""
+        return self.size.width
+
+    @property
+    def height(self) -> float:
+        """Canvas height in dp (see :attr:`size`)."""
+        return self.size.height
+
+    def measure(self, width: Optional[float] = None,
+                height: Optional[float] = None) -> "Canvas":
+        """Pin the size (dp); pass nothing to go back to estimating."""
+        if width is None and height is None:
+            self._measured = None
+        else:
+            current = self.size
+            self._measured = Size(
+                float(current.width if width is None else width),
+                float(current.height if height is None else height))
+        return self
 
     def _paint(self, paint: Optional[Paint], kwargs: dict) -> dict:
         if paint is not None:
@@ -227,8 +329,17 @@ class Canvas(Widget):
                          "paint": self._paint(paint, style)})
         return self
 
-    def oval(self, x: float, y: float, w: float, h: float, *,
+    def oval(self, x: float, y: float, w: float, h: Optional[float] = None, *,
              paint: Optional[Paint] = None, **style) -> "Canvas":
+        """Draw an oval, or a circle when only one size is supplied.
+
+        The four-argument form keeps the original top-left ``x, y, w, h``
+        semantics. For convenience, ``oval(x, y, radius)`` is accepted as a
+        circle with centre ``x, y``; this mirrors :meth:`circle` and prevents
+        a missing optional height from taking down an entire widget render.
+        """
+        if h is None:
+            return self.circle(x, y, w, paint=paint, **style)
         self.ops.append({"op": "oval", "x": float(x), "y": float(y),
                          "w": float(w), "h": float(h),
                          "paint": self._paint(paint, style)})
@@ -257,12 +368,13 @@ class Canvas(Widget):
 
     def text(self, value: str, x: float, y: float, *, size: float = 14,
              color: str = Colors.TEXT, align: str = "left",
-             weight: int = 400, rotate: float = 0.0) -> "Canvas":
+             weight: Any = 400, rotate: float = 0.0) -> "Canvas":
+        """Draw a string — ``weight`` takes ``400``/``700`` or ``"bold"``."""
         if align not in ALIGNS:
             raise ValueError(f"align must be one of {ALIGNS}")
         self.ops.append({"op": "text", "value": str(value), "x": float(x),
                          "y": float(y), "size": float(size), "color": color,
-                         "align": align, "weight": int(weight),
+                         "align": align, "weight": _font_weight(weight),
                          "rotate": float(rotate)})
         return self
 
@@ -272,8 +384,6 @@ class Canvas(Widget):
                          "y": float(y), "w": float(w), "h": float(h),
                          "fit": fit})
         return self
-
-                                                                           
 
     def save(self) -> "Canvas":
         self.ops.append({"op": "save"})
@@ -309,8 +419,6 @@ class Canvas(Widget):
         """Drop every recorded command (useful inside ``on_draw``)."""
         self.ops.clear()
         return self
-
-                                                                           
 
     def sparkline(self, values: Sequence[float], *, color: str = Colors.PRIMARY,
                   width: float = 2.0, fill: bool = False,
@@ -358,12 +466,61 @@ class Canvas(Widget):
                         color=self.bg or Colors.SURFACE, fill=True)
         return self
 
-                                                                           
+    draw_line = line
+    draw_rect = rect
+    draw_circle = circle
+    draw_oval = oval
+    draw_arc = arc
+    draw_path = path
+    draw_polygon = polygon
+    draw_text = text
+    draw_image = image
+    draw_grid = grid
+    draw_pie = pie
+    draw_sparkline = sparkline
+
+    def _draw_arguments(self) -> tuple:
+        try:
+            params = list(inspect.signature(self.on_draw).parameters.values())
+        except (TypeError, ValueError):
+            return (self,)
+        positional = [p for p in params
+                      if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+        if any(p.kind is p.VAR_POSITIONAL for p in params):
+            accepted = 3
+        else:
+            accepted = min(len(positional), 3)
+        required = sum(1 for p in positional if p.default is p.empty)
+        count = max(accepted, min(required, 3))
+        if count <= 1:
+            return (self,)
+        size = self.size
+        if count == 2:
+            return (self, size)
+        return (self, size.width, size.height)
+
+    def draw(self) -> "Canvas":
+        """Re-run ``on_draw``, replacing the recorded commands.
+
+        Called automatically before serialisation. A painter that raises
+        is logged and keeps whatever it recorded — one bad frame cannot
+        take down the rebuild cycle — and the exception stays on
+        :attr:`last_draw_error`.
+        """
+        if self.on_draw is None:
+            return self
+        self.ops.clear()
+        self.last_draw_error = None
+        try:
+            self.on_draw(*self._draw_arguments())
+        except Exception as exc:
+            self.last_draw_error = exc
+            print(f"[Pydrud] canvas on_draw error ({self.key}): "
+                  f"{type(exc).__name__}: {exc}")
+        return self
 
     def _serialise_props(self) -> dict:
-        if self.on_draw is not None:
-            self.ops.clear()
-            self.on_draw(self)
+        self.draw()
         props = dict(self._extra)
         props.update({"ops": list(self.ops), "units": self.units,
                       "antialias": self.antialias})
@@ -371,7 +528,6 @@ class Canvas(Widget):
 
     def __repr__(self) -> str:
         return f"Canvas(key={self.key!r}, ops={len(self.ops)})"
-
 
 def radial_point(cx: float, cy: float, radius: float,
                  degrees: float) -> tuple[float, float]:

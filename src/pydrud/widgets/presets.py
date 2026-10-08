@@ -9,14 +9,15 @@ fully compatible with diffing, testing, theming and older Android runtimes.
 
 from __future__ import annotations
 
-from typing import Callable, Optional, Union
+from typing import Any, Callable, Optional, Sequence, Union
 
 from pydrud.widgets.base import Widget
 from pydrud.widgets.basic import (
     Button, Checkbox, Icon, IconButton, Image, Radio, Switch, Text,
 )
 from pydrud.widgets.layout import (
-    Card, Column, Container, Divider, GridView, ListView, Row, SizedBox,
+    Card, Column, Container, Divider, GridView, ListView, PageView, Row,
+    SizedBox,
 )
 from pydrud.widgets.material import (
     AssistChip, Avatar, CircularProgress, FilterChip, ListTile,
@@ -27,10 +28,6 @@ from pydrud.widgets.tokens import Tokens
 
 Size = Union[float, int, str]
 
-
-                                                                              
-
-
 class Expanded(Container):
     """Make ``child`` consume the remaining space on a Row or Column axis."""
 
@@ -39,7 +36,6 @@ class Expanded(Container):
         if flex < 1:
             raise ValueError("Expanded flex must be at least 1")
         super().__init__(child=child, expand=int(flex), **kwargs)
-
 
 class Flexible(Container):
     """A flex child which may use the remaining Row/Column space."""
@@ -50,6 +46,236 @@ class Flexible(Container):
             raise ValueError("Flexible flex must be at least 1")
         super().__init__(child=child, expand=int(flex), **kwargs)
 
+class Flex(Widget):
+    """Flutter's ``Flex``: a :class:`Row` or :class:`Column` chosen by axis.
+
+    ``Row`` and ``Column`` are the two axes of the same layout, so a widget
+    that wants to switch between them (a responsive card, a segmented
+    toolbar) had to duplicate its whole child list for each branch.
+    ``Flex`` picks the axis at construction time and delegates::
+
+        Flex(direction="horizontal", children=[a, b], spacing=12)
+        Flex(direction="vertical", children=[a, b], main_alignment="center")
+
+    ``direction`` accepts Flutter's ``Axis`` spelling as well as the words
+    the rest of Pydrud uses (``"row"``/``"column"``, ``"x"``/``"y"``).
+    ``main_alignment``/``cross_alignment`` are Flutter's
+    ``mainAxisAlignment``/``crossAxisAlignment``; the Pydrud spellings
+    (``horizontal_alignment``/``vertical_alignment``) work too.
+
+    The result serialises as a plain ``Row``/``Column``, so it diffs,
+    tests and themes exactly like the widget it stands for.
+    """
+
+    _widget_type = "Flex"
+
+    AXES = {
+        "horizontal": "horizontal", "row": "horizontal", "x": "horizontal",
+        "vertical": "vertical", "column": "vertical", "y": "vertical",
+    }
+
+    def __init__(self, *, direction: str = "horizontal",
+                 children: Optional[list[Widget]] = None, spacing: float = 0,
+                 main_axis_size: Optional[str] = None,
+                 cross_axis_size: Optional[str] = None,
+                 main_alignment: Optional[str] = None,
+                 cross_alignment: Optional[str] = None,
+                 horizontal_alignment: Optional[str] = None,
+                 vertical_alignment: Optional[str] = None,
+                 key: Optional[str] = None, style: Optional[dict] = None,
+                 expand: Optional[int] = None, visible: bool = True,
+                 scroll: bool = False, **kwargs):
+        super().__init__(key=key, style=style, expand=expand,
+                         visible=visible, **kwargs)
+        axis = self.AXES.get(str(direction).strip().lower())
+        if axis is None:
+            raise ValueError(
+                f"direction must be one of {sorted(self.AXES)}, "
+                f"got {direction!r}")
+        self.direction = axis
+        self._items = list(children or [])
+        self._spacing = spacing
+        self._main_axis_size = main_axis_size
+        self._cross_axis_size = cross_axis_size
+
+        self._main_alignment = (main_alignment if main_alignment is not None
+                                else (horizontal_alignment
+                                      if axis == "horizontal"
+                                      else vertical_alignment))
+        self._cross_alignment = (cross_alignment if cross_alignment is not None
+                                 else (vertical_alignment
+                                       if axis == "horizontal"
+                                       else horizontal_alignment))
+        self._scroll = scroll
+        self.rebuild()
+
+    @property
+    def is_horizontal(self) -> bool:
+        return self.direction == "horizontal"
+
+    def add(self, *widgets: Widget) -> "Flex":
+        self._items.extend(widgets)
+        self.rebuild()
+        return self
+
+    def rebuild(self) -> None:
+        """(Re)build the underlying Row/Column from the current children."""
+        builder = Row if self.is_horizontal else Column
+
+        if self.is_horizontal:
+            alignments = {"horizontal_alignment": self._main_alignment,
+                          "vertical_alignment": self._cross_alignment}
+        else:
+            alignments = {"vertical_alignment": self._main_alignment,
+                          "horizontal_alignment": self._cross_alignment}
+        alignments = {k: v for k, v in alignments.items() if v is not None}
+        self.children = [builder(
+            key=f"{self.key}._flex",
+            children=self._items,
+            spacing=self._spacing,
+            main_axis_size=self._main_axis_size,
+            cross_axis_size=self._cross_axis_size,
+            style=dict(self.style),
+            expand=self.expand,
+            visible=self.visible,
+            scroll=self._scroll,
+            **alignments,
+            **self._extra,
+        )]
+
+    def unwrap(self) -> Widget:
+        self.rebuild()
+        return self.children[0]
+
+class FractionallySizedBox(Container):
+    """Size a child as a fraction of its available width and/or height.
+
+    Factors are expressed as values between zero and one.  ``None`` leaves
+    that axis unconstrained, matching Flutter's FractionallySizedBox API.
+    The factors are kept in the serialized style so the Android renderer can
+    resolve them against the parent at layout time.
+    """
+
+    def __init__(self, child: Optional[Widget] = None, *,
+                 width_factor: Optional[float] = None,
+                 height_factor: Optional[float] = None,
+                 alignment: Optional[str] = None, **kwargs):
+        for name, value in (("width_factor", width_factor),
+                            ("height_factor", height_factor)):
+            if value is not None and not 0 <= value <= 1:
+                raise ValueError(f"{name} must be between 0 and 1")
+        style = dict(kwargs.pop("style", {}) or {})
+        if width_factor is not None:
+            style["widthFactor"] = float(width_factor)
+        if height_factor is not None:
+            style["heightFactor"] = float(height_factor)
+        super().__init__(child=child, alignment=alignment, style=style,
+                         **kwargs)
+
+class FittedBox(Container):
+    """Scale and position a child to fit its available bounds.
+
+    ``fit`` accepts the renderer's standard scale modes (for example
+    ``contain``, ``cover``, ``fill`` and ``none``).
+    """
+
+    FITS = {"contain", "cover", "fill", "fit_width", "fit_height", "none"}
+
+    def __init__(self, child: Optional[Widget] = None, *,
+                 fit: str = "contain", alignment: Optional[str] = None,
+                 **kwargs):
+        if fit not in self.FITS:
+            raise ValueError(f"fit must be one of {sorted(self.FITS)}")
+        style = dict(kwargs.pop("style", {}) or {})
+        style["fit"] = fit
+        super().__init__(child=child, alignment=alignment, style=style,
+                         **kwargs)
+
+class MetricCard(Card):
+    """A production dashboard metric with optional trend and icon.
+
+    This is a composition of native ``Card``, ``Row`` and ``Text`` widgets,
+    so it works on Android runtimes that predate the convenience class.
+    """
+
+    def __init__(self, label: str, value: Any, *,
+                 trend: Optional[str] = None, icon: Optional[str] = None,
+                 accent: Optional[str] = None, **kwargs):
+        from pydrud.widgets.basic import Icon
+        from pydrud.widgets.theme import Theme
+        color = accent or Theme.primary
+        top: list[Widget] = [Text(str(label), size=13, color=Theme.text_secondary)]
+        if icon:
+            top.append(Icon(icon, size=20, color=color))
+        children: list[Widget] = [Row(children=top,
+                                      horizontal_alignment="space_between")]
+        children.append(Text(str(value), size=28, weight=700,
+                             color=Theme.text))
+        if trend:
+            children.append(Text(str(trend), size=12, color=color))
+        super().__init__(child=Column(children=children, spacing=6), **kwargs)
+
+class DataTable(Card):
+    """A responsive, scroll-friendly data table built from native layouts.
+
+    ``rows`` may contain strings or arbitrary values.  The table validates
+    row widths early and exposes a stable ``on_row_click(index)`` callback.
+    """
+
+    def __init__(self, columns: Sequence[str], rows: Sequence[Sequence[Any]], *,
+                 on_row_click: Optional[Callable[[int], None]] = None,
+                 striped: bool = False, compact: bool = False, **kwargs):
+        from pydrud.widgets.theme import Theme
+        labels = [str(column) for column in columns]
+        if not labels:
+            raise ValueError("DataTable requires at least one column")
+        normalized = [list(row) for row in rows]
+        if any(len(row) != len(labels) for row in normalized):
+            raise ValueError("every DataTable row must match columns length")
+        pad = 8 if compact else 14
+        header = Row(children=[Text(label, weight=700, size=13,
+                                    color=Theme.text, key=f"th-{i}")
+                               for i, label in enumerate(labels)],
+                     spacing=pad)
+        body: list[Widget] = [header, Divider()]
+        for index, row in enumerate(normalized):
+            cells = [Text(str(value), size=13, color=Theme.text,
+                          key=f"td-{index}-{i}")
+                     for i, value in enumerate(row)]
+            style = {"stripe": index % 2 == 1} if striped else {}
+            body.append(Row(children=cells, spacing=pad, style=style,
+                            key=f"tr-{index}",
+                            on_click=(lambda _event, i=index: on_row_click(i))
+                            if on_row_click else None))
+        super().__init__(child=Column(children=body, spacing=0, scroll=True), **kwargs)
+
+class Timeline(Column):
+    """A vertical activity timeline with native rows and dividers."""
+
+    def __init__(self, events: Sequence[Any], *,
+                 accent: Optional[str] = None, **kwargs):
+        from pydrud.widgets.theme import Theme
+        color = accent or Theme.primary
+        children: list[Widget] = []
+        for index, event in enumerate(events):
+            if isinstance(event, dict):
+                title = event.get("title", "")
+                subtitle = event.get("subtitle", event.get("time", ""))
+            else:
+                title, subtitle = (list(event) + [""])[:2]
+            marker = Text("●", size=18, color=color, key=f"tl-dot-{index}")
+            content = Column(children=[Text(str(title), weight=600,
+                                            key=f"tl-title-{index}"),
+                                       Text(str(subtitle), size=12,
+                                            color=Theme.text_secondary,
+                                            key=f"tl-sub-{index}")],
+                             spacing=3, expand=1, key=f"tl-body-{index}")
+            children.append(Row(children=[marker, content], spacing=12,
+                                key=f"tl-row-{index}"))
+            if index < len(events) - 1:
+                children.append(Divider(indent=10, end_indent=10,
+                                        key=f"tl-sep-{index}"))
+        super().__init__(children=children, spacing=0, **kwargs)
 
 class Align(Container):
     """Place a child at a named :class:`~pydrud.Alignment` position."""
@@ -58,14 +284,12 @@ class Align(Container):
                  alignment: str = "center", **kwargs):
         super().__init__(child=child, alignment=alignment, **kwargs)
 
-
 class ColoredBox(Container):
     """A lightweight box filled with ``color``."""
 
     def __init__(self, color: str, *, child: Optional[Widget] = None,
                  **kwargs):
         super().__init__(child=child, bg=color, **kwargs)
-
 
 class DecoratedBox(Container):
     """A box with colour, border, radius and optional elevation."""
@@ -80,7 +304,6 @@ class DecoratedBox(Container):
             style["elevation"] = float(elevation)
         super().__init__(child=child, bg=color, border=border,
                          border_radius=border_radius, style=style, **kwargs)
-
 
 class ConstrainedBox(Container):
     """Apply minimum and maximum dimensions to a child."""
@@ -98,7 +321,6 @@ class ConstrainedBox(Container):
                 style[name] = value
         super().__init__(child=child, style=style, **kwargs)
 
-
 class LimitedBox(ConstrainedBox):
     """Convenience max-width/max-height constraint."""
 
@@ -108,7 +330,6 @@ class LimitedBox(ConstrainedBox):
         super().__init__(child, max_width=max_width, max_height=max_height,
                          **kwargs)
 
-
 class Gap(SizedBox):
     """A fixed horizontal, vertical or square layout gap."""
 
@@ -117,7 +338,6 @@ class Gap(SizedBox):
             raise ValueError("Gap axis must be horizontal, vertical or both")
         super().__init__(width=size if axis != "vertical" else 0,
                          height=size if axis != "horizontal" else 0, **kwargs)
-
 
 class VerticalDivider(Divider):
     """A vertical hairline for use inside a Row."""
@@ -129,7 +349,6 @@ class VerticalDivider(Divider):
         width = self.style.get("thickness", 1)
         self.style.update({"width": width, "height": height})
 
-
 class SingleChildScrollView(ListView):
     """A one-child vertical or horizontal native scroll view."""
 
@@ -137,7 +356,6 @@ class SingleChildScrollView(ListView):
                  horizontal: bool = False, **kwargs):
         super().__init__(children=[child] if child is not None else [],
                          horizontal=horizontal, **kwargs)
-
 
 class Wrap(GridView):
     """Responsive wrapping layout backed by Pydrud's auto-column grid."""
@@ -152,7 +370,6 @@ class Wrap(GridView):
         self.style["minItemWidth"] = float(min_item_width)
         self.style["maxColumns"] = max(1, int(max_columns))
 
-
 class ButtonBar(Row):
     """A trailing-aligned row for dialog/card actions."""
 
@@ -162,9 +379,19 @@ class ButtonBar(Row):
                          horizontal_alignment=alignment,
                          vertical_alignment="center", **kwargs)
 
+class Carousel(PageView):
+    """A peeking, snapping carousel — a :class:`PageView` with the neighbours
+    left visible.
 
-                                                                              
+    Same widget, carousel defaults: a ``peek`` of 24 dp reveals a sliver of
+    the next page so the swipe affordance is obvious. Renders as a
+    ``PageView`` (there is no separate native type).
+    """
 
+    def __init__(self, children: Optional[list[Widget]] = None, *,
+                 peek: int = 24, orientation: str = "horizontal", **kwargs):
+        super().__init__(children=children, peek=peek,
+                         orientation=orientation, **kwargs)
 
 class Heading(Text):
     """Semantic-looking heading preset (levels 1 through 6)."""
@@ -179,7 +406,6 @@ class Heading(Text):
         kwargs.setdefault("color", Theme.text)
         super().__init__(value, **kwargs)
 
-
 class Title(Text):
     """20sp semibold title text."""
 
@@ -189,7 +415,6 @@ class Title(Text):
         kwargs.setdefault("color", Theme.text)
         super().__init__(value, **kwargs)
 
-
 class Subtitle(Text):
     """Secondary 15sp supporting text."""
 
@@ -197,7 +422,6 @@ class Subtitle(Text):
         kwargs.setdefault("size", 15)
         kwargs.setdefault("color", Theme.text_secondary)
         super().__init__(value, **kwargs)
-
 
 class Label(Text):
     """Compact semibold control/field label."""
@@ -208,7 +432,6 @@ class Label(Text):
         kwargs.setdefault("color", Theme.text)
         super().__init__(value, **kwargs)
 
-
 class Caption(Text):
     """Small secondary caption text."""
 
@@ -216,7 +439,6 @@ class Caption(Text):
         kwargs.setdefault("size", 12)
         kwargs.setdefault("color", Theme.text_secondary)
         super().__init__(value, **kwargs)
-
 
 class Link(Text):
     """Clickable text styled with the active theme colour."""
@@ -227,7 +449,6 @@ class Link(Text):
         kwargs.setdefault("weight", 600)
         super().__init__(value, on_click=on_click, **kwargs)
 
-
 class NetworkImage(Image):
     """An image loaded from an HTTP(S) URL."""
 
@@ -236,13 +457,11 @@ class NetworkImage(Image):
             raise ValueError("NetworkImage expects an http:// or https:// URL")
         super().__init__(url, **kwargs)
 
-
 class AssetImage(Image):
     """An image loaded from the generated project's ``assets/`` directory."""
 
     def __init__(self, asset: str, **kwargs):
         super().__init__(asset, **kwargs)
-
 
 class CircleImage(Image):
     """Square image clipped to a circle."""
@@ -253,7 +472,6 @@ class CircleImage(Image):
         kwargs.setdefault("height", size)
         kwargs.setdefault("border_radius", size / 2)
         super().__init__(src, **kwargs)
-
 
 class Placeholder(Container):
     """Themed placeholder for media or content which has not loaded yet."""
@@ -272,10 +490,6 @@ class Placeholder(Container):
                          border_radius=Tokens.radius_card,
                          alignment="center", style=style, **kwargs)
 
-
-                                                                              
-
-
 class SwitchListTile(ListTile):
     """List tile with its label on the left and a switch on the far right."""
 
@@ -288,7 +502,6 @@ class SwitchListTile(ListTile):
             control.on_change(on_change)
         super().__init__(title, subtitle=subtitle, trailing=control, **kwargs)
 
-
 class CheckboxListTile(ListTile):
     """List tile with a trailing native checkbox."""
 
@@ -300,7 +513,6 @@ class CheckboxListTile(ListTile):
         if on_change is not None:
             control.on_change(on_change)
         super().__init__(title, subtitle=subtitle, trailing=control, **kwargs)
-
 
 class RadioListTile(ListTile):
     """List tile with a trailing native radio control."""
@@ -316,18 +528,14 @@ class RadioListTile(ListTile):
             control.on_change(on_change)
         super().__init__(title, subtitle=subtitle, trailing=control, **kwargs)
 
-
 class ActionChip(AssistChip):
     """Flutter-compatible name for an assist/action chip."""
-
 
 class ChoiceChip(FilterChip):
     """Flutter-compatible name for a single selectable filter chip."""
 
-
 class CircleAvatar(Avatar):
     """Flutter-compatible name for Pydrud's native circular avatar."""
-
 
 class BackButton(IconButton):
     """Standard back icon button."""
@@ -335,23 +543,17 @@ class BackButton(IconButton):
     def __init__(self, *, on_click: Optional[Callable] = None, **kwargs):
         super().__init__(Icons.BACK, text="", on_click=on_click, **kwargs)
 
-
 class CloseButton(IconButton):
     """Standard close icon button."""
 
     def __init__(self, *, on_click: Optional[Callable] = None, **kwargs):
         super().__init__(Icons.CLOSE, text="", on_click=on_click, **kwargs)
 
-
 class MenuButton(IconButton):
     """Standard overflow/menu icon button."""
 
     def __init__(self, *, on_click: Optional[Callable] = None, **kwargs):
         super().__init__(Icons.MORE_VERT, text="", on_click=on_click, **kwargs)
-
-
-                                                                              
-
 
 class SectionHeader(Row):
     """Section title with optional trailing action/widget."""
@@ -366,7 +568,6 @@ class SectionHeader(Row):
             children.append(action)
         super().__init__(children=children, vertical_alignment="center",
                          **kwargs)
-
 
 class EmptyState(Column):
     """Centered empty-content message with an optional action button."""
@@ -387,7 +588,6 @@ class EmptyState(Column):
         super().__init__(children=children, spacing=12,
                          horizontal_alignment="center", **kwargs)
 
-
 class ErrorState(Column):
     """Centered error message with an optional retry action."""
 
@@ -406,7 +606,6 @@ class ErrorState(Column):
         super().__init__(children=children, spacing=12,
                          horizontal_alignment="center", **kwargs)
 
-
 class LoadingState(Column):
     """Centered circular progress indicator and status label."""
 
@@ -416,7 +615,6 @@ class LoadingState(Column):
             children.append(Subtitle(label, text_align="center"))
         super().__init__(children=children, spacing=12,
                          horizontal_alignment="center", **kwargs)
-
 
 class InfoCard(Card):
     """Icon, title and body arranged in a themed card."""
@@ -433,7 +631,6 @@ class InfoCard(Card):
             ]),
         ])
         super().__init__(child=content, **kwargs)
-
 
 class StatCard(Card):
     """Compact dashboard metric card."""
@@ -454,7 +651,6 @@ class StatCard(Card):
                                  else Theme.text_secondary))
         super().__init__(child=Column(spacing=6, children=children), **kwargs)
 
-
 class SettingsTile(ListTile):
     """Settings row with an optional value or trailing control."""
 
@@ -465,7 +661,6 @@ class SettingsTile(ListTile):
             trailing = Caption(value)
         super().__init__(title, leading=leading, trailing=trailing, **kwargs)
 
-
 class NavigationTile(ListTile):
     """Tappable list row with a standard trailing chevron."""
 
@@ -473,7 +668,6 @@ class NavigationTile(ListTile):
                  leading: Optional[Union[str, Widget]] = None, **kwargs):
         super().__init__(title, leading=leading,
                          trailing=Icons.CHEVRON_RIGHT, **kwargs)
-
 
 class FormSection(Column):
     """Labelled vertical group for related form fields."""
@@ -484,9 +678,9 @@ class FormSection(Column):
         section_children.extend(children or [])
         super().__init__(children=section_children, spacing=spacing, **kwargs)
 
-
 __all__ = [
-    "Expanded", "Flexible", "Align", "ColoredBox", "DecoratedBox",
+    "Expanded", "Flexible", "Flex", "FractionallySizedBox", "FittedBox", "Align",
+    "MetricCard", "DataTable", "Timeline", "ColoredBox", "DecoratedBox",
     "ConstrainedBox", "LimitedBox", "Gap", "VerticalDivider",
     "SingleChildScrollView", "Wrap", "ButtonBar", "Heading", "Title",
     "Subtitle", "Label", "Caption", "Link", "NetworkImage", "AssetImage",

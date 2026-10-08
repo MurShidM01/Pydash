@@ -7,7 +7,7 @@ from typing import Optional, Union
 
 from pydrud.widgets.base import Widget
 from pydrud.widgets.styling import FontStyle
-
+from pydrud.widgets.theme import Icons
 
 class Text(Widget):
     """Read-only text label."""
@@ -58,7 +58,6 @@ class Text(Widget):
     def _serialise_props(self) -> dict:
         return {"value": self._value}
 
-
 class Button(Widget):
     """A clickable button, rendered as a native Material button.
 
@@ -89,7 +88,7 @@ class Button(Widget):
         variant: str = "filled",
         color: Optional[str] = None,
         bg_color: Optional[str] = None,
-        size: Optional[str] = None,                    
+        size: Optional[str] = None,
         pill: bool = False,
         full_width: bool = False,
         disabled: bool = False,
@@ -133,14 +132,12 @@ class Button(Widget):
     def _serialise_props(self) -> dict:
         return {"text": self._text}
 
-
 class FilledButton(Button):
     """Convenience alias for ``Button(..., variant="filled")``."""
 
     def __init__(self, text: str = "", **kwargs):
         kwargs.setdefault("variant", "filled")
         super().__init__(text, **kwargs)
-
 
 class TonalButton(Button):
     """Soft filled Material button."""
@@ -149,14 +146,12 @@ class TonalButton(Button):
         kwargs.setdefault("variant", "tonal")
         super().__init__(text, **kwargs)
 
-
 class OutlinedButton(Button):
     """Hairline-outline Material button."""
 
     def __init__(self, text: str = "", **kwargs):
         kwargs.setdefault("variant", "outlined")
         super().__init__(text, **kwargs)
-
 
 class TextButton(Button):
     """Text-only Material button."""
@@ -165,14 +160,12 @@ class TextButton(Button):
         kwargs.setdefault("variant", "text")
         super().__init__(text, **kwargs)
 
-
 class ElevatedButton(Button):
     """Filled button with native elevation."""
 
     def __init__(self, text: str = "", **kwargs):
         kwargs.setdefault("variant", "elevated")
         super().__init__(text, **kwargs)
-
 
 class IconButton(Button):
     """Compact button that shows an icon and optional accessible label."""
@@ -181,7 +174,6 @@ class IconButton(Button):
         kwargs.setdefault("variant", "text")
         kwargs.setdefault("icon", icon)
         super().__init__(text, **kwargs)
-
 
 class TextField(Widget):
     """Single- or multi-line text input.
@@ -217,9 +209,9 @@ class TextField(Widget):
         max_lines: Optional[int] = None,
         password: bool = False,
         read_only: bool = False,
-        keyboard: Optional[str] = None,                                             
-        ime_action: Optional[str] = None,                                                      
-        variant: str = "filled",                                
+        keyboard: Optional[str] = None,
+        ime_action: Optional[str] = None,
+        variant: str = "filled",
         icon: Optional[str] = None,
         accent: Optional[str] = None,
         key: Optional[str] = None,
@@ -267,7 +259,6 @@ class TextField(Widget):
             d["label"] = self._label
         return d
 
-
 class SearchField(TextField):
     """Text field preset for search bars and filters."""
 
@@ -278,7 +269,6 @@ class SearchField(TextField):
         kwargs.setdefault("ime_action", "search")
         super().__init__(value, **kwargs)
 
-
 class EmailField(TextField):
     """Text field with the email keyboard and mail icon."""
 
@@ -286,7 +276,6 @@ class EmailField(TextField):
         kwargs.setdefault("keyboard", "email")
         kwargs.setdefault("icon", "email")
         super().__init__(value, **kwargs)
-
 
 class PasswordField(TextField):
     """Password field with obscured input."""
@@ -296,14 +285,12 @@ class PasswordField(TextField):
         kwargs.setdefault("icon", "lock")
         super().__init__(value, **kwargs)
 
-
 class NumberField(TextField):
     """Text field using Android's numeric keyboard."""
 
     def __init__(self, value: str = "", **kwargs):
         kwargs.setdefault("keyboard", "number")
         super().__init__(value, **kwargs)
-
 
 class PhoneField(TextField):
     """Text field using Android's phone keypad."""
@@ -313,7 +300,6 @@ class PhoneField(TextField):
         kwargs.setdefault("icon", "call")
         super().__init__(value, **kwargs)
 
-
 class UrlField(TextField):
     """Text field using Android's URL keyboard."""
 
@@ -321,7 +307,6 @@ class UrlField(TextField):
         kwargs.setdefault("keyboard", "url")
         kwargs.setdefault("icon", "link")
         super().__init__(value, **kwargs)
-
 
 class Image(Widget):
     """Displays an image from assets or a URL."""
@@ -332,7 +317,7 @@ class Image(Widget):
         self,
         src: str = "",
         *,
-        fit: Optional[str] = None,                                                                
+        fit: Optional[str] = None,
         width: Optional[Union[float, str]] = None,
         height: Optional[Union[float, str]] = None,
         border_radius: Optional[float] = None,
@@ -364,7 +349,6 @@ class Image(Widget):
     def _serialise_props(self) -> dict:
         return {"src": self._src}
 
-
 class SvgPicture(Image):
     """An SVG image from assets or HTTPS.
 
@@ -379,9 +363,23 @@ class SvgPicture(Image):
             raise ValueError("SvgPicture src must end in .svg")
         super().__init__(src, **kwargs)
 
-
 class Icon(Widget):
-    """A Material icon glyph."""
+    """A Material icon glyph.
+
+    Use a shipped name — ::
+
+        Icon("star")
+
+    or render arbitrary 24x24 SVG path data, so the icon set is effectively
+    unlimited and an app can ship its own iconography without touching the
+    framework (PYDRUD §16.2)::
+
+        Icon.svg("M12,2 L22,12 L12,22 L2,12 Z")
+
+    ``pydrud.icons.has(name)`` / ``pydrud.icons.available()`` report which
+    names the renderer understands; an unknown name now logs a warning and
+    is flagged by ``pydrud analyze`` instead of silently rendering "?".
+    """
 
     _widget_type = "Icon"
 
@@ -398,15 +396,43 @@ class Icon(Widget):
         **kwargs,
     ):
         super().__init__(key=key, style=style, expand=expand, visible=visible, **kwargs)
-        self._icon_name = name
+        self._icon_name = Icons.normalize(name)
+        self._icon_path: Optional[str] = None
         if size:
             self.style.setdefault("font", {})["size"] = size
         if color:
             self.style.setdefault("font", {})["color"] = color
 
-    def _serialise_props(self) -> dict:
-        return {"name": self._icon_name}
+    @classmethod
+    def svg(
+        cls,
+        path_data: str,
+        *,
+        size: Optional[float] = None,
+        color: Optional[str] = None,
+        key: Optional[str] = None,
+        style: Optional[dict] = None,
+        expand: Optional[int] = None,
+        visible: bool = True,
+        **kwargs,
+    ) -> "Icon":
+        """An icon drawn from raw 24x24 SVG path data.
 
+        ``path_data`` uses the same path syntax as an Android
+        ``VectorDrawable`` (``M``/``L``/``C``/``A``/``Z`` …). The glyph is
+        tinted and scaled exactly like a named icon.
+        """
+        if not isinstance(path_data, str) or not path_data.strip():
+            raise ValueError("Icon.svg() needs non-empty 24x24 SVG path data")
+        icon = cls(name="star", size=size, color=color, key=key, style=style,
+                   expand=expand, visible=visible, **kwargs)
+        icon._icon_path = path_data.strip()
+        return icon
+
+    def _serialise_props(self) -> dict:
+        if self._icon_path is not None:
+            return {"path": self._icon_path}
+        return {"name": self._icon_name}
 
 class Checkbox(Widget):
     """A checkbox with a label."""
@@ -445,7 +471,6 @@ class Checkbox(Widget):
 
     def _serialise_props(self) -> dict:
         return {"label": self._label, "checked": self._checked}
-
 
 class Switch(Widget):
     """A toggle switch with an optional label.
@@ -496,7 +521,6 @@ class Switch(Widget):
     def _serialise_props(self) -> dict:
         return {"label": self._label, "active": self._active}
 
-
 class ProgressBar(Widget):
     """A determinate or indeterminate progress indicator."""
 
@@ -534,10 +558,8 @@ class ProgressBar(Widget):
     def _serialise_props(self) -> dict:
         return {"value": self._value, "indeterminate": self._indeterminate}
 
-
 class LinearProgress(ProgressBar):
     """Alias for :class:`ProgressBar` with Material naming."""
-
 
 class Slider(Widget):
     """A draggable value slider."""
@@ -548,8 +570,8 @@ class Slider(Widget):
         self,
         value: float = 0,
         *,
-        min: float = 0,                      
-        max: float = 100,                    
+        min: float = 0,
+        max: float = 100,
         divisions: Optional[int] = None,
         color: Optional[str] = None,
         key: Optional[str] = None,
@@ -581,6 +603,83 @@ class Slider(Widget):
     def _serialise_props(self) -> dict:
         return {"value": self._value, "min": self._min, "max": self._max}
 
+class RangeSlider(Widget):
+    """A slider with two thumbs that selects a range.
+
+    ``values=(lo, hi)`` (or ``start=``/``end=``) are clamped to
+    ``[min, max]`` and ordered, so ``RangeSlider(80, 20)`` is the same as
+    ``RangeSlider(20, 80)``. ``on_change`` receives ``{"values": [lo, hi]}``.
+
+    Rendered natively by Material's ``RangeSlider``, which draws the two
+    thumbs and the highlighted track between them.
+    """
+
+    _widget_type = "RangeSlider"
+
+    def __init__(
+        self,
+        start: float = 0,
+        end: float = 100,
+        *,
+        values: Optional[tuple] = None,
+        min: float = 0,
+        max: float = 100,
+        divisions: Optional[int] = None,
+        step_size: Optional[float] = None,
+        color: Optional[str] = None,
+        key: Optional[str] = None,
+        style: Optional[dict] = None,
+        expand: Optional[int] = None,
+        visible: bool = True,
+        **kwargs,
+    ):
+        super().__init__(key=key, style=style, expand=expand, visible=visible,
+                         **kwargs)
+        if max <= min:
+            raise ValueError("RangeSlider max must be greater than min")
+        self._min = float(min)
+        self._max = float(max)
+        if values is not None:
+            try:
+                start, end = values
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "RangeSlider values must be a (start, end) pair") from None
+        self._start, self._end = self._normalise(start, end)
+        if divisions is not None:
+            self.style["divisions"] = int(divisions)
+        if step_size is not None:
+            if step_size <= 0:
+                raise ValueError("RangeSlider step_size must be positive")
+            self.style["stepSize"] = float(step_size)
+        if color:
+            self.style["color"] = color
+        self.style.setdefault("width", "match")
+
+    def _normalise(self, start: float, end: float) -> tuple:
+        low = _clamp(float(start), self._min, self._max)
+        high = _clamp(float(end), self._min, self._max)
+        return (low, high) if low <= high else (high, low)
+
+    @property
+    def values(self) -> tuple:
+        return (self._start, self._end)
+
+    @values.setter
+    def values(self, pair):
+        self._start, self._end = self._normalise(*pair)
+
+    @property
+    def start(self) -> float:
+        return self._start
+
+    @property
+    def end(self) -> float:
+        return self._end
+
+    def _serialise_props(self) -> dict:
+        return {"values": [self._start, self._end],
+                "min": self._min, "max": self._max}
 
 class Dropdown(Widget):
     """A dropdown (spinner) that lets the user pick one of several options."""
@@ -634,7 +733,6 @@ class Dropdown(Widget):
             d["hint"] = self._hint
         return d
 
-
 class Radio(Widget):
     """A single radio button. Group several with the same ``group`` name."""
 
@@ -674,7 +772,6 @@ class Radio(Widget):
             "group": self._group,
             "selected": self._selected,
         }
-
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))

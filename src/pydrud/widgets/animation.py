@@ -24,7 +24,6 @@ from typing import Any, Callable, Optional, Union
 
 from pydrud.widgets.base import Widget
 
-                                                   
 CURVES = (
     "linear",
     "ease_in",
@@ -36,7 +35,6 @@ CURVES = (
     "decelerate",
     "accelerate",
 )
-
 
 class Animation:
     """A reusable animation specification."""
@@ -63,8 +61,6 @@ class Animation:
             d["reverse"] = True
         return d
 
-                                                                           
-
     @classmethod
     def fast(cls) -> "Animation":
         return cls(150, curve="ease_out")
@@ -84,7 +80,6 @@ class Animation:
     def __repr__(self) -> str:
         return f"Animation({self.duration}ms, {self.curve})"
 
-
 def _spec(animation: Union[Animation, int, dict, None],
           default_ms: int = 250) -> dict:
     if animation is None:
@@ -96,7 +91,6 @@ def _spec(animation: Union[Animation, int, dict, None],
     if isinstance(animation, dict):
         return dict(animation)
     raise TypeError("animation must be an Animation, milliseconds or dict")
-
 
 class _Animated(Widget):
     """Base for implicit-animation wrappers."""
@@ -116,7 +110,6 @@ class _Animated(Widget):
     @property
     def duration(self) -> int:
         return int(self.animation.get("duration", 0))
-
 
 class AnimatedContainer(_Animated):
     """A Container whose size, colour, padding and radius animate on change."""
@@ -144,7 +137,6 @@ class AnimatedContainer(_Animated):
             k for k in self.style
             if k in ("width", "height", "bg", "borderRadius", "padding", "opacity"))}
 
-
 class AnimatedOpacity(_Animated):
     """Fades its child to ``opacity`` whenever the value changes."""
 
@@ -159,7 +151,6 @@ class AnimatedOpacity(_Animated):
 
     def _serialise_props(self) -> dict:
         return {**self._extra, "opacity": self.opacity}
-
 
 class AnimatedScale(_Animated):
     """Scales its child (1.0 = natural size)."""
@@ -176,7 +167,6 @@ class AnimatedScale(_Animated):
     def _serialise_props(self) -> dict:
         return {**self._extra, "scale": self.scale}
 
-
 class AnimatedRotation(_Animated):
     """Rotates its child to ``degrees``."""
 
@@ -191,7 +181,6 @@ class AnimatedRotation(_Animated):
 
     def _serialise_props(self) -> dict:
         return {**self._extra, "degrees": self.degrees}
-
 
 class AnimatedSwitcher(_Animated):
     """Cross-fades between children when the child's key changes.
@@ -222,8 +211,8 @@ class AnimatedSwitcher(_Animated):
 
     def _serialise_props(self) -> dict:
         return {**self._extra, "transition": self.transition,
+                "duration": self.duration or 250,
                 "childKey": self.child_key}
-
 
 class _Entrance(_Animated):
     """Base for one-shot entrance animations."""
@@ -233,20 +222,17 @@ class _Entrance(_Animated):
     def _serialise_props(self) -> dict:
         return {**self._extra, "effect": self.effect, "once": True}
 
-
 class FadeIn(_Entrance):
     """Fades the child in when it first appears."""
 
     _widget_type = "FadeIn"
     effect = "fade"
 
-
 class ScaleIn(_Entrance):
     """Pops the child in from 80% scale."""
 
     _widget_type = "ScaleIn"
     effect = "scale"
-
 
 class SlideIn(_Entrance):
     """Slides the child in from an edge."""
@@ -267,7 +253,6 @@ class SlideIn(_Entrance):
     def _serialise_props(self) -> dict:
         return {**super()._serialise_props(),
                 "direction": self.direction, "distance": self.distance}
-
 
 class Hero(Widget):
     """Marks a widget as a shared element across a route transition.
@@ -290,7 +275,6 @@ class Hero(Widget):
     def _serialise_props(self) -> dict:
         return {**self._extra, "tag": self.tag}
 
-
 def animate(widget: Widget, animation: Union[Animation, int, dict, None] = None,
             **properties: Any) -> Widget:
     """Attach an animation spec (and optional target style) to any widget.
@@ -302,7 +286,5 @@ def animate(widget: Widget, animation: Union[Animation, int, dict, None] = None,
     widget.style.update(properties)
     return widget
 
-
-                                                                    
-Widget.animate = lambda self, animation=None, **props: animate(                              
+Widget.animate = lambda self, animation=None, **props: animate(
     self, animation, **props)

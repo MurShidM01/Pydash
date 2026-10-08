@@ -30,7 +30,6 @@ from pydrud.widgets.basic import Text
 from pydrud.widgets.tokens import Tokens
 from pydrud.widgets.theme import Colors, Theme
 
-
 class AppBar(Widget):
     """Material-style top app bar.
 
@@ -80,16 +79,13 @@ class AppBar(Widget):
         if isinstance(padding, EdgeInsets):
             self.padding = padding.to_dict()
         else:
-                                                                           
-                                                                          
+
             left = 6 if isinstance(leading, Widget) else 16
             vertical = {"compact": 4, "normal": 8, "comfortable": 12}[density]
             self.padding = padding or EdgeInsets(
                 left=left, top=vertical, right=6, bottom=vertical).to_dict()
 
         self.children = [self._build()]
-
-                                                                           
 
     def _title_widget(self) -> Optional[Widget]:
         if isinstance(self.title, str):
@@ -137,18 +133,16 @@ class AppBar(Widget):
             "elevation": self.elevation,
             "padding": self.padding,
             "width": "match",
-                                                                       
-                                                      
+
             "minHeight": self.height if self.height is not None else density_height,
-                                                                             
-                                                                             
+
             "safeAreaTop": self.safe_area,
         }
         if self.divider and not self.elevation:
-                                                                       
+
             bar_style["border"] = Border.only(
                 bottom=True, color=Theme.outline, width=1).to_dict()
-        bar_style.update(self.style)
+        bar_style.update(self._effective_style())
 
         return Container(
             key=f"{self.key}._bar",
@@ -161,15 +155,21 @@ class AppBar(Widget):
         )
 
     def _action_slot(self, child: Widget, suffix: str) -> Container:
-        """Wrap an icon/button in a 48dp circular, ripple-backed target."""
+        """Wrap an icon/button in a circular, ripple-backed target.
+
+        The control keeps its own size (and a ``size="sm"`` button already
+        carries a comfortable touch target); the slot only adds breathing
+        room. A compact bar drops that halo from 12dp to 2dp, which is what
+        lets its controls stop dictating the bar height — otherwise an icon
+        button would stretch a compact bar back to full height.
+        """
+        pad = 2 if self.density == "compact" else 12
         return Container(
             key=f"{self.key}.{suffix}",
-            padding=EdgeInsets.all(12),
+            padding=EdgeInsets.all(pad),
             style={"borderRadius": 24, "feedback": True},
             child=child,
         )
-
-                                                                           
 
     def rebuild(self) -> None:
         """Re-create the internal layout (after mutating title/actions)."""
@@ -178,11 +178,6 @@ class AppBar(Widget):
     def unwrap(self) -> Widget:
         self.rebuild()
         return self.children[0]
-
-    def to_dict(self) -> dict:
-        """Delegate to the internal Container so Android renders it correctly."""
-        self.rebuild()
-        return self.children[0].to_dict()
 
     def _serialise_props(self) -> dict:
         return {}

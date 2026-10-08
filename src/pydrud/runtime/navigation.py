@@ -26,12 +26,12 @@ Usage::
 
 from __future__ import annotations
 import inspect
+import threading
+import warnings
 from typing import Any, Callable, Optional
-
 
 TRANSITIONS = ("none", "fade", "slide_left", "slide_right", "slide_up",
                "slide_down", "scale", "shared_axis")
-
 
 def parse_url(url: str) -> tuple[str, dict]:
     """Split ``myapp://host/items/7?tab=specs`` into ``("/items/7", {...})``.
@@ -48,13 +48,12 @@ def parse_url(url: str) -> tuple[str, dict]:
     if parts.scheme and not parts.netloc and parts.path and "://" in url:
         path = "/" + parts.path.lstrip("/")
     if parts.netloc and parts.scheme not in ("http", "https"):
-                                                     
+
         path = "/" + parts.netloc + ("" if path == "/" else path)
     query = dict(parse_qsl(parts.query))
     if parts.fragment:
         query["fragment"] = parts.fragment
     return (path or "/"), query
-
 
 class Route:
     """A named screen route.
@@ -80,8 +79,6 @@ class Route:
         self.guard = guard
         self.segments = [s for s in str(name).split("/") if s]
         self.is_pattern = any(s.startswith((":", "*")) for s in self.segments)
-
-                                                                           
 
     def match(self, path: str) -> Optional[dict]:
         """Return captured params when *path* matches, else ``None``."""
@@ -125,7 +122,7 @@ class Route:
                     if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
                 ]
             ) >= 2
-        except (TypeError, ValueError):                          
+        except (TypeError, ValueError):
             accepts_params = False
 
         if accepts_params:
@@ -136,58 +133,89 @@ class Route:
     def __repr__(self) -> str:
         return f"Route({self.name!r})"
 
-
 def _coerce(value: str):
     """URL segments are strings; turn obvious integers into ints."""
     if value.isdigit():
         return int(value)
     return value
 
-
 class NavigationStack:
-    """A LIFO stack of navigation entries (the top entry is the active screen)."""
+    """A LIFO stack of navigation entries (the top entry is the active screen).
+
+    Every operation takes a lock, and the compound ones ("pop unless this
+    is the root", "collapse back to the root") are single operations
+    rather than a check followed by a mutation — two taps landing on
+    different threads can no longer interleave into a corrupted stack.
+    """
 
     def __init__(self):
+        self._lock = threading.RLock()
         self._stack: list[dict] = []
 
     def push(self, route_name: str, params: dict | None = None) -> None:
         """Push a new screen onto the stack."""
-        self._stack.append({"route": route_name, "params": dict(params or {})})
+        with self._lock:
+            self._stack.append({"route": route_name,
+                                "params": dict(params or {})})
 
-    def pop(self) -> dict | None:
-        """Pop the top screen. Returns the removed entry, or None if empty."""
-        if not self._stack:
-            return None
-        return self._stack.pop()
+    def pop(self, *, keep_root: bool = False) -> dict | None:
+        """Pop the top screen, or return ``None`` when there is none.
+
+        ``keep_root=True`` refuses to pop the last entry, which is the
+        atomic form of ``if stack.can_pop(): stack.pop()``.
+        """
+        with self._lock:
+            if not self._stack or (keep_root and len(self._stack) < 2):
+                return None
+            return self._stack.pop()
 
     def current(self) -> dict | None:
         """Peek at the top entry without removing it."""
-        return self._stack[-1] if self._stack else None
+        with self._lock:
+            return self._stack[-1] if self._stack else None
+
+    def root(self) -> dict | None:
+        """Peek at the bottom (root) entry."""
+        with self._lock:
+            return self._stack[0] if self._stack else None
 
     def clear(self) -> None:
-        self._stack.clear()
+        with self._lock:
+            self._stack.clear()
 
     def can_pop(self) -> bool:
         """True when there is a screen *below* the active one."""
-        return len(self._stack) > 1
+        with self._lock:
+            return len(self._stack) > 1
 
     def size(self) -> int:
-        return len(self._stack)
+        with self._lock:
+            return len(self._stack)
 
     def routes(self) -> list[str]:
-        return [e["route"] for e in self._stack]
+        with self._lock:
+            return [e["route"] for e in self._stack]
 
     def reset_to(self, route_name: str, params: dict | None = None) -> None:
         """Clear the stack and set *route_name* as the single root entry."""
-        self._stack = [{"route": route_name, "params": dict(params or {})}]
+        with self._lock:
+            self._stack = [{"route": route_name, "params": dict(params or {})}]
+
+    def collapse_to_root(self) -> bool:
+        """Drop every entry above the root. False when already there."""
+        with self._lock:
+            if len(self._stack) < 2:
+                return False
+            del self._stack[1:]
+            return True
 
     def replace_top(self, route_name: str, params: dict | None = None) -> None:
         entry = {"route": route_name, "params": dict(params or {})}
-        if self._stack:
-            self._stack[-1] = entry
-        else:
-            self._stack.append(entry)
-
+        with self._lock:
+            if self._stack:
+                self._stack[-1] = entry
+            else:
+                self._stack.append(entry)
 
 class Router:
     """Manages route definitions and navigation state.
@@ -199,7 +227,7 @@ class Router:
     def __init__(self):
         self._routes: dict[str, Route] = {}
         self._stack = NavigationStack()
-        self._app: Optional[Any] = None                              
+        self._app: Optional[Any] = None
         self._on_change: list[Callable[[str], None]] = []
         self._guards: list[Callable] = []
         self._not_found: Optional[Callable] = None
@@ -208,8 +236,6 @@ class Router:
         self._scheme: str = ""
         self._initial_route: Optional[str] = None
         self._initial_params: dict = {}
-
-                                                                           
 
     def define(self, name: str, builder: Callable, **kwargs) -> "Router":
         """Register a route.
@@ -260,8 +286,6 @@ class Router:
         """Declare the custom URL scheme used for deep links (``myapp``)."""
         self._scheme = str(scheme).rstrip(":/")
         return self
-
-                                                                           
 
     def match(self, path: str) -> Optional[tuple]:
         """Resolve a path to ``(route, params)``, or ``None``.
@@ -333,8 +357,6 @@ class Router:
         prefix = f"{self._scheme}://" if self._scheme else ""
         return prefix + self.path().lstrip("/")
 
-                                                                           
-
     def nest(self, name: str, child: "Router") -> "Router":
         """Attach a child router that owns navigation *inside* one screen.
 
@@ -360,8 +382,6 @@ class Router:
         """The nested router belonging to the current screen, if any."""
         return self._children.get(self.current_route or "")
 
-                                                                           
-
     def _resolve(self, name: str, params: dict) -> tuple[str, dict]:
         """Accept either a route pattern or a concrete path/URL.
 
@@ -376,7 +396,7 @@ class Router:
             params = {**query, **params}
         matched = self.match(path)
         if matched is None:
-            self._require(name)                                            
+            self._require(name)
         route, matched_params = matched
         return route.name, {**matched_params, **params}
 
@@ -394,9 +414,8 @@ class Router:
 
     def pop(self) -> bool:
         """Go back to the previous screen. Returns True when it navigated."""
-        if not self._stack.can_pop():
+        if self._stack.pop(keep_root=True) is None:
             return False
-        self._stack.pop()
         self._render()
         return True
 
@@ -407,21 +426,33 @@ class Router:
         self._render()
 
     def reset(self, name: str | None = None, **params) -> None:
-        """Clear the history. With *name*, make it the new root screen."""
+        """Clear history and make a route the sole root screen.
+
+        Omitting *name* restores the route passed to :meth:`initial`, which
+        makes ``reset()`` a reliable "go home" operation. If no initial route
+        was configured there is no safe route to select; the stack is cleared,
+        the attached app is updated, and a warning explains the ambiguity.
+        """
         if name is None:
-            self._stack.clear()
-            return
+            if self._initial_route is None:
+                warnings.warn(
+                    "Router.reset() has no initial route; clearing the stack.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                self._stack.clear()
+                self._render()
+                return
+            name = self._initial_route
+            params = {**self._initial_params, **params}
         name, params = self._resolve(name, params)
         self._stack.reset_to(name, params)
         self._render()
 
     def pop_to_root(self) -> bool:
         """Pop every screen except the root one."""
-        if not self._stack.can_pop():
+        if not self._stack.collapse_to_root():
             return False
-        root = self._stack.routes()[0]
-        root_params = self._stack._stack[0]["params"]
-        self._stack.reset_to(root, root_params)
         self._render()
         return True
 
@@ -454,8 +485,6 @@ class Router:
                 return verdict
         return True
 
-                                                                           
-
     def build_root(self) -> Callable:
         """Return the page builder that renders the current route."""
         def _builder(page):
@@ -479,8 +508,6 @@ class Router:
         """Attach this router to an App instance."""
         self._app = app
 
-                                                                           
-
     @property
     def current_route(self) -> Optional[str]:
         entry = self._stack.current()
@@ -501,8 +528,6 @@ class Router:
 
     def can_pop(self) -> bool:
         return self._stack.can_pop()
-
-                                                                           
 
     def _require(self, name: str) -> None:
         if name not in self._routes:
@@ -527,7 +552,7 @@ class Router:
         for cb in list(self._on_change):
             try:
                 cb(current or "")
-            except Exception as exc:                                    
+            except Exception as exc:
                 print(f"[Pydrud] Router on_change error: {exc}")
 
     def __repr__(self) -> str:

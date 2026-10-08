@@ -14,15 +14,8 @@ from typing import Callable, Optional, Sequence, Union
 from pydrud.widgets.base import Widget
 from pydrud.widgets.theme import Colors
 
-
 def _clean(d: dict) -> dict:
     return {k: v for k, v in d.items() if v is not None}
-
-
-                                                                            
-        
-                                                                            
-
 
 class CameraPreview(Widget):
     """A live CameraX preview surface.
@@ -85,9 +78,7 @@ class CameraPreview(Widget):
         self.auto_request_permission = bool(auto_request_permission)
         self.fallback = fallback
         self.scan_overlay = bool(scan_overlay)
-                                                                          
-                                                                             
-                                                                        
+
         self.children = [fallback] if fallback is not None else []
         self.style.setdefault("width", "match")
         self.style.setdefault("height", height)
@@ -107,7 +98,6 @@ class CameraPreview(Widget):
             "scanOverlay": self.scan_overlay or None,
         }))
         return props
-
 
 class QRScanner(CameraPreview):
     """CameraX + ML Kit QR scanner with a native focus-frame overlay.
@@ -142,12 +132,6 @@ class QRScanner(CameraPreview):
             **kwargs,
         )
 
-
-                                                                            
-      
-                                                                            
-
-
 class Marker:
     """A pin on a :class:`MapView`."""
 
@@ -175,7 +159,6 @@ class Marker:
 
     def __repr__(self) -> str:
         return f"Marker({self.lat}, {self.lon}, {self.title!r})"
-
 
 class MapView(Widget):
     """An OpenStreetMap-backed map (no API key) or Google Maps when available.
@@ -250,12 +233,6 @@ class MapView(Widget):
         }))
         return props
 
-
-                                                                            
-           
-                                                                            
-
-
 class Span:
     """A styled run of text inside :class:`RichText`."""
 
@@ -288,7 +265,6 @@ class Span:
 
     def __repr__(self) -> str:
         return f"Span({self.text!r})"
-
 
 class RichText(Widget):
     """Mixed-style text in a single native ``TextView`` (spans, not layouts).
@@ -356,11 +332,9 @@ class RichText(Widget):
         }))
         return props
 
-
 _MD_INLINE = re.compile(
     r"(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|`[^`]+`|~~[^~]+~~|"
     r"\[[^\]]+\]\([^)]+\))")
-
 
 class Markdown(Widget):
     """Render a Markdown subset — headings, lists, code, links, emphasis.
@@ -391,8 +365,6 @@ class Markdown(Widget):
         self.code_bg = code_bg
         self.link_color = link_color
         self.selectable = bool(selectable)
-
-                                                                           
 
     def blocks(self) -> list[dict]:
         """The parsed document: a list of ``{"kind", ...}`` blocks."""
@@ -464,7 +436,7 @@ class Markdown(Widget):
 
             paragraph = [stripped]
             index += 1
-            while index < len(lines) and lines[index].strip() and\
+            while index < len(lines) and lines[index].strip() and \
                     not re.match(r"^(#|>|```|[-*+]\s|\d+[.)]\s)",
                                  lines[index].strip()):
                 paragraph.append(lines[index].strip())
@@ -487,7 +459,7 @@ class Markdown(Widget):
             elif part.startswith("`") and part.endswith("`"):
                 spans.append(Span(part[1:-1], mono=True,
                                   bg=self.code_bg).to_dict())
-            elif (part.startswith("*") and part.endswith("*")) or\
+            elif (part.startswith("*") and part.endswith("*")) or \
                     (part.startswith("_") and part.endswith("_")):
                 spans.append(Span(part[1:-1], italic=True).to_dict())
             elif part.startswith("[") and part.endswith(")"):
@@ -523,12 +495,6 @@ class Markdown(Widget):
             "selectable": self.selectable,
         })
         return props
-
-
-                                                                            
-                        
-                                                                            
-
 
 class ReorderableList(Widget):
     """A list whose rows can be dragged into a new order.
@@ -582,7 +548,6 @@ class ReorderableList(Widget):
         }))
         return props
 
-
 class InfiniteList(Widget):
     """A virtualised, endlessly scrolling list backed by ``RecyclerView``.
 
@@ -625,8 +590,7 @@ class InfiniteList(Widget):
                 raise TypeError("InfiniteList children must be widgets")
         self.total = len(rows)
         self.window = int(window)
-                                                                            
-                                                                   
+
         self.children = rows[: self.window]
         self.truncated = self.total > self.window
         self.has_more = bool(has_more) or self.truncated
@@ -654,3 +618,62 @@ class InfiniteList(Widget):
             "virtualized": True,
         }))
         return props
+
+class NativeView(Widget):
+    """Mount an arbitrary Android ``View`` subclass by class name.
+
+    The escape hatch PYDRUD §15.3 asked for: an app team can drop in any
+    native control — a third-party chart, a game surface, an OEM widget —
+    without forking Pydrud or regenerating the Java::
+
+        from pydrud import NativeView
+
+        NativeView("com.example.MyGauge", props={"value": 0.42, "unit": "%"},
+                   style={"width": 240, "height": 240})
+
+    The renderer loads the class with the app's own class loader and
+    constructs it from ``(Context)``. Props are then applied in one of two
+    ways:
+
+    * **Preferred** — if the class declares
+      ``public void applyProps(org.json.JSONObject p)``, it is handed the
+      whole props map and owns its own interpretation.
+    * **Otherwise** — every prop is mapped onto a ``setXxx`` setter
+      (``"value"`` → ``setValue``, ``"text"`` → ``setText``), with the JSON
+      value coerced to the parameter type. A prop with no matching setter
+      logs a warning naming the setter it looked for.
+
+    Because the class name comes from Python, the *view* also has to exist
+    in the APK: add the dependency to ``pydrud.yaml`` (or ``app/``) and
+    ``pydrud sync``. A class that cannot be loaded renders an empty box and
+    logs the reason rather than taking the frame down.
+    """
+
+    _widget_type = "NativeView"
+
+    def __init__(self, view_class: str, *, props: Optional[dict] = None,
+                 key: Optional[str] = None, style: Optional[dict] = None,
+                 expand: Optional[int] = None, visible: bool = True,
+                 **kwargs):
+        super().__init__(key=key, style=style, expand=expand,
+                         visible=visible, **kwargs)
+        name = str(view_class).strip()
+        if not name:
+            raise ValueError("NativeView() needs a fully-qualified View class")
+        if "." not in name:
+            raise ValueError(
+                f"NativeView({name!r}) needs a fully-qualified class name, "
+                f"e.g. 'com.example.MyView'")
+        self.view_class = name
+        self.props: dict = dict(props or {})
+
+    def _serialise_props(self) -> dict:
+        merged = dict(self._extra)
+        merged["viewClass"] = self.view_class
+
+        merged.update(self.props)
+        return merged
+
+    def __repr__(self) -> str:
+        return (f"NativeView({self.view_class!r}, key={self.key!r}, "
+                f"{len(self.props)} props)")

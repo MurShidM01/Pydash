@@ -24,7 +24,6 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
-                                                                     
 CURVES: dict[str, Callable[[float], float]] = {
     "linear": lambda t: t,
     "ease_in": lambda t: t * t,
@@ -40,7 +39,6 @@ CURVES: dict[str, Callable[[float], float]] = {
                                                     * (2 * math.pi / 3)) + 1),
 }
 
-
 def _bounce(t: float) -> float:
     n, d = 7.5625, 2.75
     if t < 1 / d:
@@ -54,14 +52,12 @@ def _bounce(t: float) -> float:
     t -= 2.625 / d
     return n * t * t + 0.984375
 
-
 def curve(name: str) -> Callable[[float], float]:
     """Look up an easing function by name."""
     if name not in CURVES:
         raise ValueError(f"Unknown curve {name!r}. Available: "
                          f"{', '.join(sorted(CURVES))}")
     return CURVES[name]
-
 
 class AnimationController:
     """A ticking 0 → 1 value with listeners, driven off the UI thread.
@@ -87,10 +83,7 @@ class AnimationController:
         self._runner = runner
         self._on_ui = on_ui
         self._value = self.lower
-                                                                           
-                                                                            
-                                                                     
-                                                                         
+
         self._t = 0.0
         self._from = self.lower
         self._to = self.upper
@@ -103,8 +96,6 @@ class AnimationController:
         self._listeners: list[Callable[[float], None]] = []
         self._completers: list[Callable[[], None]] = []
         self._lock = threading.RLock()
-
-                                                                           
 
     @property
     def value(self) -> float:
@@ -124,8 +115,6 @@ class AnimationController:
     def completed(self) -> bool:
         return not self._running and self._value >= self.upper
 
-                                                                           
-
     def on_tick(self, callback: Callable[[float], None]) -> "AnimationController":
         if not callable(callback):
             raise TypeError("tick listener must be callable")
@@ -137,8 +126,6 @@ class AnimationController:
             raise TypeError("completion listener must be callable")
         self._completers.append(callback)
         return self
-
-                                                                           
 
     def forward(self, *, from_: Optional[float] = None) -> "AnimationController":
         """Animate towards :attr:`upper`."""
@@ -164,7 +151,7 @@ class AnimationController:
 
     def toggle(self) -> "AnimationController":
         """Reverse when at (or heading to) the end, otherwise go forward."""
-        return self.reverse() if self._direction > 0 and self._value > 0\
+        return self.reverse() if self._direction > 0 and self._value > 0 \
             else self.forward()
 
     def repeat(self, *, reverse: bool = False) -> "AnimationController":
@@ -183,8 +170,7 @@ class AnimationController:
         if duration:
             self.duration = float(duration)
         self._direction = 1 if target >= self._value else -1
-                                                                            
-                                                                         
+
         self._retarget(target)
         return self._start()
 
@@ -215,8 +201,6 @@ class AnimationController:
         self._listeners.clear()
         self._completers.clear()
 
-                                                                           
-
     def _start(self) -> "AnimationController":
         with self._lock:
             if self._running:
@@ -226,7 +210,7 @@ class AnimationController:
         interval = 1.0 / self.fps
         if self._runner is not None and hasattr(self._runner, "every"):
             self._timer = self._runner.every(interval, self._tick)
-        else:                                                           
+        else:
             self._timer = _ThreadTicker(interval, self._tick)
             self._timer.start()
         return self
@@ -272,7 +256,6 @@ class AnimationController:
         return (f"AnimationController(value={self._value:.3f}, "
                 f"running={self._running}, curve={self.curve_name!r})")
 
-
 class _ThreadTicker:
     """Fallback ticker used when no task runner is available (tests, CLI)."""
 
@@ -291,7 +274,6 @@ class _ThreadTicker:
 
     def cancel(self) -> None:
         self._stop.set()
-
 
 class Tween:
     """Maps a controller's 0-1 value onto a real value.
@@ -325,13 +307,12 @@ class Tween:
     def __repr__(self) -> str:
         return f"Tween({self.begin!r} → {self.end!r})"
 
-
 def _lerp(a: Any, b: Any, t: float) -> Any:
     if isinstance(a, str) and a.startswith("#"):
         return _lerp_color(a, b, t)
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
         value = a + (b - a) * t
-        return type(a)(value) if isinstance(a, int) and isinstance(b, int)\
+        return type(a)(value) if isinstance(a, int) and isinstance(b, int) \
             else value
     if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
         values = [_lerp(x, y, t) for x, y in zip(a, b)]
@@ -340,11 +321,10 @@ def _lerp(a: Any, b: Any, t: float) -> Any:
         return {k: _lerp(v, b.get(k, v), t) for k, v in a.items()}
     return b if t >= 0.5 else a
 
-
 def _lerp_color(a: str, b: str, t: float) -> str:
     def parts(color: str) -> tuple[int, int, int, int]:
         value = str(color).lstrip("#").strip()
-        if len(value) in (3, 4):                                  
+        if len(value) in (3, 4):
             value = "".join(c * 2 for c in value)
         if len(value) == 6:
             value = "FF" + value
@@ -356,11 +336,10 @@ def _lerp_color(a: str, b: str, t: float) -> str:
     try:
         ca, cb = parts(a), parts(b)
     except ValueError:
-                                                                      
+
         return b if t >= 0.5 else a
     mixed = [round(x + (y - x) * t) for x, y in zip(ca, cb)]
     return "#" + "".join(f"{c:02X}" for c in mixed)
-
 
 class Sequence_:
     """Run controllers one after another (a storyboard)."""

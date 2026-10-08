@@ -44,16 +44,17 @@ _PY_TO_SQL = {
     bool: "INTEGER",
     str: "TEXT",
     bytes: "BLOB",
-    dict: "TEXT",                   
-    list: "TEXT",                   
+    dict: "TEXT",
+    list: "TEXT",
 }
 
+_TYPE_ALIASES = {t.__name__: t for t in _PY_TO_SQL}
+_TYPE_ALIASES.update({
+    "integer": int, "text": str, "string": str, "real": float,
+    "double": float, "boolean": bool, "blob": bytes, "json": dict,
+})
 
-                                                                          
-                                                                        
-                                                   
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
 
 def _ident(name: str) -> str:
     """Validate a table/column name before it is spliced into SQL.
@@ -70,21 +71,39 @@ def _ident(name: str) -> str:
             "match [A-Za-z_][A-Za-z0-9_]*")
     return text
 
-
-class Field:
-    """A column definition on a :class:`Model`."""
-
-    __slots__ = ("name", "type", "primary_key", "null", "unique", "index",
-                 "default", "sql_type")
-
-    def __init__(self, type_: type = str, *, primary_key: bool = False,
-                 null: bool = True, unique: bool = False, index: bool = False,
-                 default: Any = None):
-        if type_ not in _PY_TO_SQL:
+def _resolve_type(type_: Any) -> type:
+    """Accept ``int``, ``"int"`` or ``"INTEGER"`` and return a Python type."""
+    if isinstance(type_, str):
+        resolved = _TYPE_ALIASES.get(type_.strip().lower())
+        if resolved is None:
             raise TypeError(
                 f"Unsupported column type {type_!r}. "
                 f"Use one of {sorted(t.__name__ for t in _PY_TO_SQL)}")
-        self.name = ""                                   
+        return resolved
+    if type_ not in _PY_TO_SQL:
+        raise TypeError(
+            f"Unsupported column type {type_!r}. "
+            f"Use one of {sorted(t.__name__ for t in _PY_TO_SQL)}")
+    return type_
+
+class Field:
+    """A column definition on a :class:`Model`.
+
+    ``name`` is optional — :class:`ModelMeta` fills it in from the
+    attribute the field is assigned to, and an explicit one (what
+    ``column("score", int)`` passes) has to agree with it.
+    """
+
+    __slots__ = ("name", "type", "primary_key", "null", "unique", "index",
+                 "default", "sql_type", "explicit_name")
+
+    def __init__(self, type_: Any = str, *, name: str = "",
+                 primary_key: bool = False,
+                 null: bool = True, unique: bool = False, index: bool = False,
+                 default: Any = None):
+        type_ = _resolve_type(type_)
+        self.name = str(name)
+        self.explicit_name = bool(name)
         self.type = type_
         self.primary_key = bool(primary_key)
         self.null = bool(null) and not primary_key
@@ -92,8 +111,6 @@ class Field:
         self.index = bool(index)
         self.default = default
         self.sql_type = _PY_TO_SQL[type_]
-
-                                                                           
 
     def to_db(self, value: Any) -> Any:
         if value is None:
@@ -138,16 +155,52 @@ class Field:
     def __repr__(self) -> str:
         return f"Field({self.name!r}, {self.type.__name__})"
 
+def column(*args: Any, **kwargs: Any) -> Field:
+    """Shorthand for :class:`Field` — reads better in model bodies::
 
-def column(type_: type = str, **kwargs) -> Field:
-    """Shorthand for :class:`Field` — reads better in model bodies."""
-    return Field(type_, **kwargs)
+        name  = column(str)                      # type only (classic)
+        score = column("score", type_=int, index=True)
+        tags  = column("tags", "list")           # type named as a string
+        id    = column("id", primary_key=True)   # type inferred: int
 
+    An explicit name must match the attribute it is assigned to — the
+    attribute *is* the column name in ``where``/``order_by``/``to_dict``,
+    so a mismatch is a mistake, not an alias. Without a type, a primary
+    key (or ``id``) defaults to ``int``, the rest to ``str``.
+    """
+    name = kwargs.pop("name", "")
+    type_ = kwargs.pop("type_", None)
+    strings: list[str] = []
+    for arg in args:
+        if isinstance(arg, type):
+            if type_ is not None:
+                raise TypeError("column() got more than one type")
+            type_ = arg
+        elif isinstance(arg, str):
+            strings.append(arg)
+        else:
+            raise TypeError(
+                f"column() takes a name and/or a type, got {arg!r}")
 
-                                                                            
-          
-                                                                            
+    if len(strings) == 2:
+        if name:
+            raise TypeError("column() got more than one name")
+        name, type_ = strings[0], strings[1] if type_ is None else type_
+    elif len(strings) == 1:
+        only = strings[0]
+        known_type = only.strip().lower() in _TYPE_ALIASES
+        if type_ is None and not name and known_type:
+            type_ = only
+        elif name:
+            raise TypeError("column() got more than one name")
+        else:
+            name = only
+    elif len(strings) > 2:
+        raise TypeError("column() takes at most two positional arguments")
 
+    if type_ is None:
+        type_ = int if (kwargs.get("primary_key") or name == "id") else str
+    return Field(type_, name=name, **kwargs)
 
 class Database:
     """A thread-safe handle on one SQLite file (or ``:memory:``)."""
@@ -168,8 +221,6 @@ class Database:
             self._conn.execute("PRAGMA journal_mode=WAL")
             if foreign_keys:
                 self._conn.execute("PRAGMA foreign_keys=ON")
-
-                                                                           
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -213,8 +264,6 @@ class Database:
         row = self.first(sql, params)
         return next(iter(row.values())) if row else None
 
-                                                                           
-
     def insert(self, table: str, values: dict) -> int:
         if not values:
             raise ValueError("insert() needs at least one column")
@@ -255,13 +304,9 @@ class Database:
         return [r["name"]
                 for r in self.query(f'PRAGMA table_info("{_ident(table)}")')]
 
-                                                                           
-
     def transaction(self) -> "_Transaction":
         """Context manager: commits on success, rolls back on exception."""
         return _Transaction(self)
-
-                                                                           
 
     @property
     def version(self) -> int:
@@ -283,8 +328,6 @@ class Database:
             applied.append(migration.version)
         return applied
 
-                                                                           
-
     def bind(self, *models: type) -> "Database":
         """Attach model classes to this database and create their tables."""
         for model in models:
@@ -293,8 +336,6 @@ class Database:
             model.__database__ = self
             model.create_table()
         return self
-
-                                                                           
 
     def close(self) -> None:
         if not self._closed:
@@ -319,7 +360,6 @@ class Database:
     def __repr__(self) -> str:
         return f"Database({self.path!r}, tables={len(self.tables())})"
 
-
 class _Transaction:
     def __init__(self, db: Database):
         self._db = db
@@ -338,7 +378,6 @@ class _Transaction:
         finally:
             self._db._lock.release()
         return False
-
 
 class Migration:
     """One numbered schema change.
@@ -366,16 +405,9 @@ class Migration:
     def __repr__(self) -> str:
         return f"Migration({self.version}, {self.name!r})"
 
-
 def open_database(path: str = ":memory:", **kwargs) -> Database:
     """Open (and create if needed) a database file."""
     return Database(path, **kwargs)
-
-
-                                                                            
-     
-                                                                            
-
 
 def _where_clause(where: dict) -> tuple[str, list]:
     """Translate ``{"age__gte": 18}`` into ``" WHERE age >= ?", [18]``."""
@@ -414,7 +446,6 @@ def _where_clause(where: dict) -> tuple[str, list]:
         params.append(value)
     return " WHERE " + " AND ".join(parts), params
 
-
 class Query:
     """A lazy, chainable SELECT builder bound to a :class:`Model`."""
 
@@ -424,8 +455,6 @@ class Query:
         self._order: list[str] = []
         self._limit: Optional[int] = None
         self._offset: int = 0
-
-                                                                           
 
     def where(self, **conditions) -> "Query":
         clone = self._clone()
@@ -448,8 +477,6 @@ class Query:
     def page(self, number: int, size: int = 20) -> "Query":
         """1-based pagination helper."""
         return self.limit(size, max(0, (int(number) - 1)) * int(size))
-
-                                                                           
 
     def sql(self) -> tuple[str, list]:
         clause, params = _where_clause(self._where)
@@ -509,8 +536,6 @@ class Query:
             list(payload.values()) + params)
         return cur.rowcount
 
-                                                                           
-
     def __iter__(self) -> Iterator:
         return iter(self.all())
 
@@ -535,7 +560,6 @@ class Query:
     def __repr__(self) -> str:
         return f"Query({self._model.__name__}, {self.sql()[0]!r})"
 
-
 class ModelMeta(type):
     """Collects :class:`Field` attributes and gives every model an ``id``."""
 
@@ -546,6 +570,12 @@ class ModelMeta(type):
 
         for key, value in list(namespace.items()):
             if isinstance(value, Field):
+                if value.explicit_name and value.name != key:
+                    raise TypeError(
+                        f"{name}.{key}: column named {value.name!r} is "
+                        f"assigned to attribute {key!r}. The attribute name "
+                        f"is the column name everywhere else in the API — "
+                        f"rename one of them (or drop the name argument).")
                 value.name = key
                 fields[key] = value
                 namespace.pop(key)
@@ -559,18 +589,22 @@ class ModelMeta(type):
         if name != "Model" and not namespace.get("__table__"):
             cls.__table__ = name.lower() + "s"
         if name != "Model":
-                                                                           
+
             _ident(cls.__table__)
             for field_name in fields:
                 _ident(field_name)
         return cls
 
-
 class Model(metaclass=ModelMeta):
     """Base class for ORM models.
 
     Subclasses declare columns with :func:`column` and are attached to a
-    database with ``db.bind(MyModel)``.
+    database with ``db.bind(MyModel)``. Every model gets an autoincrement
+    ``id`` primary key for free — declaring it is optional, and it stays
+    ``None`` until the row is saved, because SQLite is what allocates it::
+
+        entry = Score(player="Ali")   # entry.id is None
+        entry.save()                  # entry.id is 1
     """
 
     __table__: str = ""
@@ -588,8 +622,6 @@ class Model(metaclass=ModelMeta):
             else:
                 setattr(self, name, field.make_default())
 
-                                                                           
-
     @classmethod
     def _db(cls) -> Database:
         if cls.__database__ is None:
@@ -604,7 +636,7 @@ class Model(metaclass=ModelMeta):
         exists = "IF NOT EXISTS " if if_not_exists else ""
         db = cls._db()
         db.execute(f'CREATE TABLE {exists}"{cls.__table__}" ({columns})')
-                                                                   
+
         present = set(db.columns(cls.__table__))
         for field in cls.__fields__.values():
             if field.name not in present:
@@ -685,8 +717,6 @@ class Model(metaclass=ModelMeta):
         for name, field in cls.__fields__.items():
             setattr(instance, name, field.from_db(row.get(name)))
         return instance
-
-                                                                           
 
     def save(self):
         """INSERT when the row is new, UPDATE when it already has an id."""

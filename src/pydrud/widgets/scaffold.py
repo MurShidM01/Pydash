@@ -22,7 +22,6 @@ from pydrud.widgets.base import Widget
 from pydrud.widgets.layout import Container, Column, Stack
 from pydrud.widgets.app_bar import AppBar
 
-
 class Scaffold(Widget):
     """Material-style page layout scaffold.
 
@@ -81,8 +80,6 @@ class Scaffold(Widget):
 
         self.children = [self._build()]
 
-                                                                           
-
     def _adapt(self) -> None:
         """On wide windows, move the bottom destinations into a side rail.
 
@@ -124,8 +121,7 @@ class Scaffold(Widget):
 
         body_style: dict = {"width": "match", "height": 0}
         if self.content_max_width:
-                                                                          
-                                                                         
+
             body_style["maxWidth"] = self.content_max_width
             body_style["alignment"] = "topCenter"
         body_container = Container(
@@ -135,7 +131,7 @@ class Scaffold(Widget):
             child=self.body,
         )
         if self.navigation_rail is not None:
-                                                               
+
             from pydrud.widgets.layout import Row
 
             column_children.append(Row(
@@ -175,8 +171,6 @@ class Scaffold(Widget):
                 fab.style.pop("left", None)
                 fab.style["alignment"] = "bottomCenter"
 
-                                                                          
-                                          
             bar = self.bottom_navigation or self.bottom_bar
             if bar is not None and not fab.style.get("_fabLifted"):
                 from pydrud.widgets.tokens import Tokens
@@ -206,7 +200,7 @@ class Scaffold(Widget):
                              "resizeForKeyboard": self.resize_to_avoid_keyboard}
         if self.bg_color:
             stack_style["bg"] = self.bg_color
-        stack_style.update(self.style)
+        stack_style.update(self._effective_style())
 
         return Stack(
             key=f"{self.key}._stack",
@@ -227,15 +221,12 @@ class Scaffold(Widget):
                   or (body_container if top is not body_container else None)
                   or body_container)
         top.style.setdefault("safeAreaTop", True)
-                                                                            
-                                                                         
+
         bottom.style.setdefault("safeAreaBottom", True)
 
     def rebuild(self) -> None:
         """Re-create the internal layout (after mutating body/app_bar/…)."""
         self.children = [self._build()]
-
-                                                                           
 
     def _serialise_props(self) -> dict:
         return {}
@@ -243,8 +234,3 @@ class Scaffold(Widget):
     def unwrap(self) -> Widget:
         self.rebuild()
         return self.children[0]
-
-    def to_dict(self) -> dict:
-        """Serialise as the internal Stack so Android renders it correctly."""
-        self.rebuild()
-        return self.children[0].to_dict()

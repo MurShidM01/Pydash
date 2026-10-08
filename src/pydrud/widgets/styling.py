@@ -6,11 +6,7 @@ provide a more ergonomic builder API.
 """
 
 from __future__ import annotations
-from typing import Optional, Union
-
-
-                                                                               
-
+from typing import Optional, Sequence, Union
 
 class EdgeInsets:
     """Represents padding or margin. Immutable."""
@@ -21,7 +17,7 @@ class EdgeInsets:
         top: float = 0,
         right: float = 0,
         bottom: float = 0,
-        all: Optional[float] = None,              
+        all: Optional[float] = None,
         horizontal: Optional[float] = None,
         vertical: Optional[float] = None,
     ):
@@ -51,7 +47,6 @@ class EdgeInsets:
     def to_dict(self) -> dict:
         return {"left": self.left, "top": self.top, "right": self.right, "bottom": self.bottom}
 
-
 class Alignment:
     """Named alignment constants."""
 
@@ -65,7 +60,6 @@ class Alignment:
     bottom_center = "bottomCenter"
     bottom_right = "bottomRight"
 
-
 class FontStyle:
     """Font configuration helper."""
 
@@ -73,7 +67,7 @@ class FontStyle:
         self,
         size: Optional[float] = None,
         color: Optional[str] = None,
-        weight: Optional[int] = None,           
+        weight: Optional[int] = None,
         italic: bool = False,
         family: Optional[str] = None,
     ):
@@ -97,7 +91,6 @@ class FontStyle:
             d["family"] = self.family
         return d
 
-
 class BorderSide:
     def __init__(self, color: str = "#FF000000", width: float = 1.0):
         self.color = color
@@ -105,7 +98,6 @@ class BorderSide:
 
     def to_dict(self) -> dict:
         return {"color": self.color, "width": self.width}
-
 
 class Border:
     """Four-sided border (every side currently receives the same style)."""
@@ -156,7 +148,6 @@ class Border:
             "bottom": self.bottom.to_dict(),
         }
 
-
 class BorderRadius:
     """Rounded-corner radius."""
 
@@ -166,9 +157,56 @@ class BorderRadius:
     def to_dict(self) -> dict:
         return {"radius": self.radius}
 
+class _Gradient:
+    """Base for serialisable native background gradients."""
 
-                                                                               
+    kind = "linear"
 
+    def __init__(self, colors: Sequence[str]):
+        values = [str(color) for color in colors]
+        if len(values) < 2:
+            raise ValueError("a gradient needs at least two colors")
+        self.colors = values
+
+    def to_dict(self) -> dict:
+        return {"kind": self.kind, "colors": list(self.colors)}
+
+class LinearGradient(_Gradient):
+    """A linear background gradient understood by the Android renderer.
+
+    ``direction`` may be ``vertical``, ``horizontal``, ``diagonal``,
+    ``diagonal_up`` or ``up``. The object is also accepted by
+    :meth:`Style.gradient` and ``Container(gradient=...)``.
+    """
+
+    def __init__(self, colors: Sequence[str], direction: str = "vertical"):
+        if direction not in {"vertical", "horizontal", "diagonal",
+                             "diagonal_up", "up"}:
+            raise ValueError("unsupported linear gradient direction")
+        super().__init__(colors)
+        self.direction = direction
+
+    def to_dict(self) -> dict:
+        return {**super().to_dict(), "direction": self.direction}
+
+class RadialGradient(_Gradient):
+    """A radial background gradient, measured in device-independent pixels."""
+
+    kind = "radial"
+
+    def __init__(self, colors: Sequence[str], radius: float = 160):
+        super().__init__(colors)
+        if radius <= 0:
+            raise ValueError("radial gradient radius must be positive")
+        self.radius = float(radius)
+
+    def to_dict(self) -> dict:
+        return {**super().to_dict(), "radius": self.radius}
+
+class SweepGradient(_Gradient):
+    """A sweep gradient descriptor for renderers which support sweep fills."""
+
+    kind = "sweep"
 
 class Style:
     """Fluent builder for widget style dictionaries.
@@ -190,8 +228,6 @@ class Style:
     def __init__(self):
         self._data: dict = {}
 
-                        
-
     def bg(self, color: str) -> "Style":
         """Background colour (hex ARGB or RGB)."""
         self._data["bg"] = self._normalise_color(color)
@@ -202,7 +238,10 @@ class Style:
         self._data["opacity"] = value
         return self
 
-                  
+    def gradient(self, value: _Gradient | dict) -> "Style":
+        """Set a native background gradient."""
+        self._data["gradient"] = value.to_dict() if hasattr(value, "to_dict") else dict(value)
+        return self
 
     def width(self, value: Union[float, str]) -> "Style":
         """Fixed width in dp, or a string like "match", "wrap"."""
@@ -230,8 +269,6 @@ class Style:
         self._data["maxHeight"] = value
         return self
 
-                     
-
     def padding(self, value: Union[EdgeInsets, float]) -> "Style":
         self._data["padding"] = value.to_dict() if isinstance(value, EdgeInsets) else {"all": value}
         return self
@@ -240,8 +277,6 @@ class Style:
         self._data["margin"] = value.to_dict() if isinstance(value, EdgeInsets) else {"all": value}
         return self
 
-                    
-
     def border(self, value: Border) -> "Style":
         self._data["border"] = value.to_dict()
         return self
@@ -249,8 +284,6 @@ class Style:
     def border_radius(self, value: Union[float, BorderRadius]) -> "Style":
         self._data["borderRadius"] = value if isinstance(value, (int, float)) else value.radius
         return self
-
-                  
 
     def font(self, value: FontStyle) -> "Style":
         self._data["font"] = value.to_dict()
@@ -269,8 +302,6 @@ class Style:
         self._data["textAlign"] = align
         return self
 
-                    
-
     def alignment(self, value: str) -> "Style":
         """Use one of the ``Alignment`` constants."""
         self._data["alignment"] = value
@@ -288,20 +319,19 @@ class Style:
         self._data["tooltip"] = value
         return self
 
-                       
-
     def rotate(self, degrees: float) -> "Style":
         self._data["rotate"] = degrees
         return self
 
-                   
+    def blur(self, radius: float) -> "Style":
+        """Frosted-glass blur radius in dp (Android 12 / API 31+)."""
+        self._data["blur"] = radius
+        return self
 
     def fit(self, value: str) -> "Style":
         """Image scale type: "cover", "contain", "fill", "fitWidth", "fitHeight", "none"."""
         self._data["fit"] = value
         return self
-
-                        
 
     def bg_image(self, src: str, fit: str = "cover") -> "Style":
         """Set background image."""

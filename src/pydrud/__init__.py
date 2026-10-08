@@ -1,22 +1,23 @@
 """
-Pydrud — Build native Android apps with Python.
+Pydrud — Build Python UIs with Pydrud.
 
-A lightweight, Flutter-inspired framework that converts a declarative
-Python widget tree into native Android Views at runtime. No XML layouts,
-no Kotlin UI code — just Python.
+A lightweight, Flutter-inspired framework with a platform-neutral widget tree
+and renderer protocol. Pydash is the toolchain-free host-preview default;
+Chaquopy is the opt-in Android APK target that renders native Views.
 """
 
-__version__ = "2.0.2"
+__version__ = "2.1.0"
 __app_name__ = "Pydrud"
 
 from pydrud.runtime.app import App
+from pydrud.core.errors import PydrudError, MaxDepthError, FrameTooLargeError
 from pydrud.core.state import State, ReactiveDict
 from pydrud.core.store import Store, Selector, Computed, ReactiveList
 from pydrud.core.events import Event, EventDispatcher
-from pydrud.core.results import Result, ResultError
+from pydrud.core.results import Result, ResultCancelled, ResultError
 from pydrud.core.elements import Element, ElementTree
 from pydrud.core.subscriptions import Subscription
-from pydrud.core.tasks import TaskRunner, Timer, debounce, throttle
+from pydrud.core.tasks import TaskRunner, Timer, debounce, throttle, job
 from pydrud.core.responsive import (Breakpoints, MediaQuery, Responsive,
                                     ScreenInfo)
 from pydrud.runtime.navigation import Router, NavigationStack, Route, parse_url
@@ -27,6 +28,7 @@ from pydrud.widgets import (
     Container,
     Column,
     Row,
+    Flex,
     Center,
     Spacer,
     Divider,
@@ -37,6 +39,7 @@ from pydrud.widgets import (
     Card,
     ListView,
     GridView,
+    PageView,
     Text,
     Button,
     FilledButton,
@@ -60,6 +63,7 @@ from pydrud.widgets import (
     ProgressBar,
     LinearProgress,
     Slider,
+    RangeSlider,
     Dropdown,
     Radio,
     AppBar,
@@ -72,6 +76,9 @@ from pydrud.widgets import (
     Border,
     BorderSide,
     BorderRadius,
+    LinearGradient,
+    RadialGradient,
+    SweepGradient,
     Colors,
     Icons,
     Theme,
@@ -82,8 +89,12 @@ from pydrud.widgets import (
     Tokens,
     ColorScheme,
     Typography,
+    TextTheme,
+    ThemeExtension,
     ListTile,
     ExpansionTile,
+    ExpansionPanel,
+    ExpansionPanelList,
     Chip,
     AssistChip,
     FilterChip,
@@ -96,14 +107,20 @@ from pydrud.widgets import (
     Tab,
     Tabs,
     NavItem,
+    NavigationItem,
+    NavigationDestination,
     BottomNavigationBar,
     NavigationBar,
     TabBar,
     AdaptiveLayout,
     ResponsiveBuilder,
+    LayoutBuilder,
+    Constraints,
     ResponsiveGrid,
     SafeArea,
     ShowWhen,
+    Visible,
+    Hidden,
     NavigationRail,
     Drawer,
     SegmentedButton,
@@ -116,6 +133,14 @@ from pydrud.widgets import (
     WebView,
     VideoPlayer,
     Chart,
+    AlertDialog,
+    Dialog,
+    ModalBottomSheet,
+    MenuItem,
+    MenuDivider,
+    PopupMenu,
+    PopupMenuButton,
+    DropdownMenu,
     GestureDetector,
     InkWell,
     Dismissible,
@@ -146,9 +171,11 @@ from pydrud.widgets import (
     custom,
     Canvas, Paint, Path, radial_point,
     CameraPreview, QRScanner, MapView, Marker, RichText, Span, Markdown,
-    ReorderableList, InfiniteList,
-    Expanded, Flexible, Align, ColoredBox, DecoratedBox, ConstrainedBox,
-    LimitedBox, Gap, VerticalDivider, SingleChildScrollView, Wrap, ButtonBar,
+    ReorderableList, InfiniteList, NativeView,
+    Expanded, Flexible, FractionallySizedBox, FittedBox, MetricCard, DataTable,
+    Timeline, Align, ColoredBox, DecoratedBox, ConstrainedBox, LimitedBox,
+    Gap, VerticalDivider, Carousel,
+    SingleChildScrollView, Wrap, ButtonBar,
     Heading, Title, Subtitle, Label, Caption, Link, NetworkImage, AssetImage,
     CircleImage, Placeholder, SwitchListTile, CheckboxListTile, RadioListTile,
     ActionChip, ChoiceChip, CircleAvatar, BackButton, CloseButton, MenuButton,
@@ -156,8 +183,17 @@ from pydrud.widgets import (
     SettingsTile, NavigationTile, FormSection,
 )
 
+from pydrud import icons
+
+from pydrud import components
+
 __all__ = [
     "App",
+    "icons",
+    "components",
+    "PydrudError",
+    "MaxDepthError",
+    "FrameTooLargeError",
     "Responsive",
     "MediaQuery",
     "Breakpoints",
@@ -174,6 +210,7 @@ __all__ = [
     "Event",
     "EventDispatcher",
     "Result",
+    "ResultCancelled",
     "ResultError",
     "Element",
     "ElementTree",
@@ -182,10 +219,12 @@ __all__ = [
     "Timer",
     "debounce",
     "throttle",
+    "job",
     "Widget",
     "Container",
     "Column",
     "Row",
+    "Flex",
     "Center",
     "Spacer",
     "Divider",
@@ -196,6 +235,7 @@ __all__ = [
     "Card",
     "ListView",
     "GridView",
+    "PageView",
     "Text",
     "Button",
     "FilledButton",
@@ -219,6 +259,7 @@ __all__ = [
     "ProgressBar",
     "LinearProgress",
     "Slider",
+    "RangeSlider",
     "Dropdown",
     "Radio",
     "AppBar",
@@ -231,6 +272,9 @@ __all__ = [
     "Border",
     "BorderSide",
     "BorderRadius",
+    "LinearGradient",
+    "RadialGradient",
+    "SweepGradient",
     "Colors",
     "Spacing",
     "Radius",
@@ -241,8 +285,12 @@ __all__ = [
     "Theme",
     "ColorScheme",
     "Typography",
+    "TextTheme",
+    "ThemeExtension",
     "ListTile",
     "ExpansionTile",
+    "ExpansionPanel",
+    "ExpansionPanelList",
     "Chip",
     "AssistChip",
     "FilterChip",
@@ -255,14 +303,20 @@ __all__ = [
     "Tab",
     "Tabs",
     "NavItem",
+    "NavigationItem",
+    "NavigationDestination",
     "BottomNavigationBar",
     "NavigationBar",
     "TabBar",
     "AdaptiveLayout",
     "ResponsiveBuilder",
+    "LayoutBuilder",
+    "Constraints",
     "ResponsiveGrid",
     "SafeArea",
     "ShowWhen",
+    "Visible",
+    "Hidden",
     "NavigationRail",
     "Drawer",
     "SegmentedButton",
@@ -275,6 +329,14 @@ __all__ = [
     "WebView",
     "VideoPlayer",
     "Chart",
+    "AlertDialog",
+    "Dialog",
+    "ModalBottomSheet",
+    "MenuItem",
+    "MenuDivider",
+    "PopupMenu",
+    "PopupMenuButton",
+    "DropdownMenu",
     "GestureDetector",
     "InkWell",
     "Dismissible",
@@ -303,7 +365,7 @@ __all__ = [
     "pattern",
     "matches",
     "custom",
-                                                              
+
     "Canvas",
     "Paint",
     "Path",
@@ -317,9 +379,16 @@ __all__ = [
     "Markdown",
     "ReorderableList",
     "InfiniteList",
-                                                   
+    "NativeView",
+
     "Expanded",
     "Flexible",
+    "FractionallySizedBox",
+    "FittedBox",
+    "MetricCard",
+    "DataTable",
+    "Timeline",
+    "Carousel",
     "Align",
     "ColoredBox",
     "DecoratedBox",
@@ -358,7 +427,7 @@ __all__ = [
     "SettingsTile",
     "NavigationTile",
     "FormSection",
-                       
+
     "Database",
     "Model",
     "Field",
@@ -367,7 +436,7 @@ __all__ = [
     "Migration",
     "Cache",
     "cached",
-                               
+
     "AnimationController",
     "Tween",
     "curve",

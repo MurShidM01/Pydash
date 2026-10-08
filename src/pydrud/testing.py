@@ -1,18 +1,20 @@
 """
-A fake Android device for end-to-end testing of the Pydrud bridge.
+A platform-neutral reference renderer for end-to-end testing of the Pydrud
+runtime bridge.
 
-``FakeDevice`` speaks exactly the protocol the Java ``BridgeService`` /
-``ViewFactory`` implement:
+``FakeRenderer`` speaks the renderer protocol used by a client:
 
-* it listens on 127.0.0.1 and accepts the Python app's connection;
-* it sends a ``ready`` event with screen metrics, and ``rotate()`` /
-  ``resize()`` / ``show_keyboard()`` replay the ``metrics`` events a real
-  device sends when the window changes;
+* it listens on a local socket and accepts the Python app's connection;
+* it sends a ``ready`` event with metrics and explicitly advertised optional
+  capabilities;
 * it applies ``full_render`` and ``render`` (patch) commands to an in-memory
-  mirror of the native view tree, using the same semantics as
-  ``ViewFactory.applyPatch``;
+  tree, using the protocol's keyed-patch semantics;
 * it can push ``click`` / ``change`` / ``back`` / ``lifecycle`` events back
   into the app and records every command it received.
+
+``FakeDevice`` remains as a backwards-compatible alias for older tests and
+applications. This local protocol test helper does not implement Pydash's
+authenticated LAN-preview handshake.
 
 That makes it possible to run a complete Pydrud app in CI and assert on what
 the device would actually display.
@@ -35,30 +37,28 @@ import threading
 import time
 from typing import Any, Optional
 
-
 class RenderedNode:
     """A mirror of a native View created from a widget JSON node."""
 
     def __init__(self, data: dict):
-        self.key: str = data.get("key", "")
-        self.type: str = data.get("type", "")
-        self.style: dict = dict(data.get("style") or {})
-        self.props: dict = dict(data.get("props") or {})
-        self.events: list[str] = list(data.get("events") or [])
-        self.visible: bool = data.get("visible", True)
-        self.children: list["RenderedNode"] = [
-            RenderedNode(c) for c in (data.get("children") or [])
-        ]
-        self.parent: Optional["RenderedNode"] = None
-        for child in self.children:
-            child.parent = self
+        _fill_node(self, data)
 
-                                                                            
+        stack = [(data, self)]
+        while stack:
+            source, node = stack.pop()
+            for child_data in (source.get("children") or []):
+                child = object.__new__(RenderedNode)
+                _fill_node(child, child_data)
+                child.parent = node
+                node.children.append(child)
+                stack.append((child_data, child))
 
     def walk(self):
-        yield self
-        for child in self.children:
-            yield from child.walk()
+        stack = [self]
+        while stack:
+            node = stack.pop()
+            yield node
+            stack.extend(reversed(node.children))
 
     def find(self, key: str) -> Optional["RenderedNode"]:
         for node in self.walk():
@@ -83,12 +83,35 @@ class RenderedNode:
     def __repr__(self) -> str:
         return f"<{self.type} {self.key!r} children={len(self.children)}>"
 
+def _fill_node(node: "RenderedNode", data: dict) -> None:
+    """Populate a node's own fields (not its children)."""
+    node.key = data.get("key", "")
+    node.type = data.get("type", "")
+    node.style = dict(data.get("style") or {})
+    node.props = dict(data.get("props") or {})
+    node.events = list(data.get("events") or [])
+    node.visible = data.get("visible", True)
+    node.tooltip = data.get("tooltip")
+    node.semantics = data.get("semantics")
+    node.children = []
+    node.parent = None
 
-class FakeDevice:
-    """A test double for the Android side of the bridge."""
+class FakeRenderer:
+    """A protocol-v2 test renderer with configurable client capabilities."""
+
+    DEFAULT_CAPABILITIES = {
+        "native_view": True,
+        "services": [
+            "dialog", "storage", "files", "clipboard", "share", "permissions",
+            "notifications", "location", "device", "haptics", "secure",
+            "background", "push", "shortcuts", "camera", "sensors",
+            "bluetooth", "nfc", "biometrics", "audio", "system_theme",
+        ],
+    }
 
     def __init__(self, host: str = "127.0.0.1", port: int = 0,
-                 width: int = 400, height: int = 800, density: float = 2.0):
+                 width: int = 400, height: int = 800, density: float = 2.0,
+                 capabilities: Optional[dict] = None, dark: bool = False):
         self.host = host
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -100,12 +123,15 @@ class FakeDevice:
         self.height = height
         self.density = density
 
+        self.dark = bool(dark)
+        advertised = self.DEFAULT_CAPABILITIES if capabilities is None else capabilities
+        self.capabilities = dict(advertised)
+
         self.root: Optional[RenderedNode] = None
         self.commands: list[dict] = []
         self.patch_batches: list[list[dict]] = []
         self.full_renders = 0
-                                                                          
-                                                                           
+
         self.events_sent = 0
 
         self._conn: Optional[socket.socket] = None
@@ -114,13 +140,11 @@ class FakeDevice:
         self._lock = threading.Lock()
         self._connected = threading.Event()
         self._activity_finished = False
-                                                                          
+
         self.responders: dict[str, Any] = {}
         self.requests: list[dict] = []
 
-                                                                            
-
-    def start(self) -> "FakeDevice":
+    def start(self) -> "FakeRenderer":
         self._running = True
         self._thread = threading.Thread(target=self._serve, daemon=True,
                                         name="fake-device")
@@ -138,20 +162,18 @@ class FakeDevice:
         if self._thread is not None:
             self._thread.join(timeout=2)
 
-    def __enter__(self) -> "FakeDevice":
+    def __enter__(self) -> "FakeRenderer":
         return self.start()
 
     def __exit__(self, *exc) -> None:
         self.stop()
 
-    def __del__(self) -> None:                                           
+    def __del__(self) -> None:
         """Close the listening socket even if ``stop()`` was never called."""
         try:
             self.stop()
         except Exception:
             pass
-
-                                                                            
 
     def _serve(self) -> None:
         try:
@@ -194,9 +216,7 @@ class FakeDevice:
                 for patch in patches:
                     self._apply_patch(patch)
             elif cmd == "render_transaction":
-                                                                           
-                                                                             
-                                                 
+
                 kind = msg.get("kind", "")
                 if kind == "snapshot":
                     self.root = RenderedNode(msg["tree"])
@@ -216,8 +236,6 @@ class FakeDevice:
             self.requests.append(msg)
             self._auto_respond(msg, request_id)
 
-                                                                           
-
     def _send_event_ack(self, message: dict) -> None:
         self._send({
             "type": "render_ack",
@@ -228,7 +246,7 @@ class FakeDevice:
             },
         })
 
-    def on_command(self, cmd: str, value: Any) -> "FakeDevice":
+    def on_command(self, cmd: str, value: Any) -> "FakeRenderer":
         """Answer ``cmd`` with *value* (or ``value(msg)`` when callable)."""
         self.responders[cmd] = value
         return self
@@ -240,7 +258,7 @@ class FakeDevice:
         answer = self.responders[cmd]
         try:
             value = answer(msg) if callable(answer) else answer
-        except Exception as exc:                                    
+        except Exception as exc:
             self.respond_error(request_id, str(exc))
             return
         self.respond(request_id, value)
@@ -259,8 +277,6 @@ class FakeDevice:
             if msg.get("cmd") == cmd:
                 return msg
         return None
-
-                                                                            
 
     def _apply_patch(self, patch: dict) -> None:
         if self.root is None:
@@ -288,6 +304,10 @@ class FakeDevice:
                     node.visible = bool(value)
                 elif name == "_events":
                     node.events = list(value or [])
+                elif name == "_tooltip":
+                    node.tooltip = value
+                elif name == "_semantics":
+                    node.semantics = value
                 elif not name.startswith("_"):
                     node.props[name] = value
             for name, value in (patch.get("style") or {}).items():
@@ -321,11 +341,9 @@ class FakeDevice:
                 parent.children.append(new_node)
                 new_node.parent = parent
 
-                                                                            
-
     def _send(self, payload: dict) -> None:
         if self._conn is None:
-            raise RuntimeError("FakeDevice: no app connected")
+            raise RuntimeError("FakeRenderer: no app connected")
         self._conn.sendall((json.dumps(payload) + "\n").encode("utf-8"))
         self.events_sent += 1
 
@@ -337,6 +355,8 @@ class FakeDevice:
                 "width": self.width,
                 "height": self.height,
                 "density": self.density,
+                "dark": self.dark,
+                "capabilities": self.capabilities,
                 "status_bar_height": 24,
                 "navigation_bar_height": 16,
                 "text_scale": 1.0,
@@ -351,6 +371,7 @@ class FakeDevice:
             "density": self.density,
             "width_px": int(self.width * self.density),
             "height_px": int(self.height * self.density),
+            "dark": self.dark,
             "status_bar_height": 24,
             "navigation_bar_height": 16,
             "padding_top": 24,
@@ -360,6 +381,11 @@ class FakeDevice:
         }
         data.update(overrides)
         self._send({"type": "metrics", "key": "", "data": data})
+
+    def set_dark(self, dark: bool = True) -> None:
+        """Simulate the user toggling the system dark-mode setting."""
+        self.dark = bool(dark)
+        self.send_metrics(reason="theme")
 
     def resize(self, width: int, height: int, **overrides) -> None:
         """Simulate a window resize (split screen, foldable, desktop)."""
@@ -394,6 +420,10 @@ class FakeDevice:
 
     def back(self) -> None:
         self.send_event("back", "")
+
+    def handle_back_press(self) -> None:
+        """Compatibility alias for tests that model the hardware button."""
+        self.back()
 
     def long_press(self, key: str) -> None:
         self.send_event("long_press", key)
@@ -442,8 +472,6 @@ class FakeDevice:
                         {"callback_id": callback_id, "action": actioned})
         return True
 
-                                                                            
-
     def wait_connected(self, timeout: float = 5.0) -> bool:
         return self._connected.wait(timeout)
 
@@ -475,7 +503,7 @@ class FakeDevice:
             raise AssertionError(
                 f"no {cmd!r} request; saw "
                 f"{[m.get('cmd') for m in self.requests]}")
-        return self.last_request(cmd)                              
+        return self.last_request(cmd)
 
     def commands_named(self, cmd: str) -> list[dict]:
         return [c for c in self.commands if c.get("cmd") == cmd]
@@ -501,23 +529,77 @@ class FakeDevice:
     def activity_finished(self) -> bool:
         return self._activity_finished
 
+FakeDevice = FakeRenderer
 
-def run_app(app, device: FakeDevice) -> threading.Thread:
-    """Run ``app.run()`` on a background thread connected to *device*."""
+def _rendering_in_progress(app) -> bool:
+    """True while the app is diffing, encoding or sending a frame."""
+    return bool(getattr(app, "_render_in_progress", 0))
+
+def _render_converged(app) -> bool:
+    """True when the renderer has acknowledged every frame the app queued.
+
+    A native ACK is the only thing that advances the confirmed revision, so
+    ``desired == confirmed`` with nothing in flight means the device's tree
+    *is* the app's latest tree. A frame being prepared counts as *not*
+    converged: it is still owed to the device.
+    """
+    desired = getattr(app, "_desired_revision", 0) or 0
+    return (
+        desired > 0
+        and not getattr(app, "_inflight", None)
+        and not getattr(app, "_render_pending", False)
+        and not _rendering_in_progress(app)
+        and (getattr(app, "_confirmed_revision", 0) or 0) == desired
+    )
+
+def wait_for_render_convergence(app, device: FakeRenderer,
+                                timeout: float = 5.0) -> bool:
+    """Wait until *device* has applied every frame *app* has queued so far.
+
+    Startup is not finished when the socket is up. The ``ready`` handshake
+    makes the app send an initial snapshot so the screen is never blank,
+    then a metrics-driven follow-up once it knows the real window size; that
+    second frame is deferred until the first one is acknowledged. A harness
+    (or a test) that looks at the tree, or at ``device.full_renders``, before
+    the follow-up lands is reading a half-started app — and a tap handled in
+    that window gets coalesced into the pending forced snapshot instead of
+    being patched in (IC-002).
+    """
+    return device.wait_for(
+        lambda d: d.root is not None and _render_converged(app), timeout)
+
+def run_app(app, device: FakeRenderer) -> threading.Thread:
+    """Run ``app.run()`` on a background thread connected to *device*.
+
+    Returns only once the app is connected *and* its startup render sequence
+    has reached the device, so a test may immediately assert on what is on
+    screen — and count renders from there — without racing the second frame.
+    """
     app.host = device.host
     app.port = device.port
-    thread = threading.Thread(target=app.run, kwargs={"max_retries": 50},
-                              daemon=True, name="pydrud-app")
+
+    app._dev_server_enabled = False
+    thread = threading.Thread(
+        target=app.run,
+        kwargs={"max_retries": 50, "use_platform_logging": False},
+        daemon=True,
+        name="pydrud-app",
+    )
     thread.start()
     if not device.wait_connected(timeout=5):
         raise AssertionError("app never connected to the fake device")
+    if not wait_for_render_convergence(app, device, timeout=5):
+        raise AssertionError(
+            "the app connected but its startup render never reached the "
+            f"device (desired={getattr(app, '_desired_revision', 0)}, "
+            f"confirmed={getattr(app, '_confirmed_revision', 0)}, "
+            f"inflight={len(getattr(app, '_inflight', None) or {})})")
     return thread
-
 
 class AppTester:
     """A one-liner harness for testing a whole app.
 
-    ``AppTester`` boots a :class:`FakeDevice`, runs the app against it on a
+    ``AppTester`` boots a :class:`FakeRenderer`, runs the app against it on a
     background thread, and gives you intention-revealing helpers (``tap``,
     ``type_in``, ``shows``) instead of raw keys and sockets::
 
@@ -532,18 +614,20 @@ class AppTester:
     """
 
     def __init__(self, target=None, *, app=None, width: int = 400,
-                 height: int = 800, density: float = 2.0, title: str = "Test"):
+                 height: int = 800, density: float = 2.0, title: str = "Test",
+                 capabilities: Optional[dict] = None, dark: bool = False):
         if target is None and app is None:
             raise ValueError("AppTester needs target= or app=")
-        self.device = FakeDevice(width=width, height=height, density=density)
+        self.device = FakeRenderer(
+            width=width, height=height, density=density,
+            capabilities=capabilities, dark=dark,
+        )
         if app is None:
             from pydrud.runtime.app import App
 
-            app = App(target=target, title=title)
+            app = App(target=target, title=title, dev_server=False)
         self.app = app
         self._thread: Optional[threading.Thread] = None
-
-                                                                           
 
     def start(self) -> "AppTester":
         self.device.start()
@@ -562,8 +646,6 @@ class AppTester:
 
     def __exit__(self, *exc) -> None:
         self.stop()
-
-                                                                           
 
     def tap(self, key_or_text: str) -> "AppTester":
         """Tap a widget by key, or by the text it displays."""
@@ -599,6 +681,11 @@ class AppTester:
         self.device.lifecycle(state)
         return self.settle()
 
+    def set_dark(self, dark: bool = True) -> "AppTester":
+        """Toggle the simulated system dark-mode setting and settle the UI."""
+        self.device.set_dark(dark)
+        return self.settle()
+
     def tap_snackbar_action(self) -> "AppTester":
         """Tap the Undo-style action on the snackbar currently showing."""
         self.device.tap_snackbar_action()
@@ -613,33 +700,74 @@ class AppTester:
         """Wait until the app has handled everything this test has sent.
 
         An empty queue is not enough on its own: an event can still be in
-        flight on the socket, which used to make taps look like no-ops.
-        So we first wait for the app's handled-event counter to catch up
-        with the number of lines the device has written, then for the
-        queue to drain (handlers may enqueue follow-up work).
+        flight on the socket, and a handler may hop back onto the UI thread
+        (``run_on_ui``) or trigger a State-driven render a moment later — so
+        a single quiet check used to read the *previous* frame (IC-001).
+
+        We therefore wait for the app's handled-event counter to catch up,
+        then for two consecutive observations in which nothing is queued,
+        nothing is in flight and the confirmed render revision has not
+        moved. That is render convergence: a late State-driven rebuild
+        changes the revision (or the queues) and keeps us waiting.
         """
         deadline = time.time() + timeout
         target = self.device.events_sent
+        stable = 0
+        previous = None
         while time.time() < deadline:
-            if self._quiet(target):
-                time.sleep(0.01)
-                if self._quiet(target):
+            epoch = self._epoch(target)
+            if self._quiet(target) and epoch == previous:
+                stable += 1
+                if stable >= 2:
                     return self
+            else:
+                stable = 0
+            previous = epoch
             time.sleep(0.005)
         return self
 
-    def _quiet(self, target: int) -> bool:
-        """True when nothing is in flight in either direction."""
-        app = self.app
-        if app._events_handled < target or not app._event_queue.empty():
-            return False
-                                                                       
-                                                                     
-                                    
-        return not getattr(app, "_render_pending", False)\
-            and not getattr(app, "_inflight", None)
+    def refresh(self, timeout: float = 1.0) -> "AppTester":
+        """Alias for settle(); waits for any pending renders/events to complete."""
+        return self.settle(timeout=timeout)
 
-                                                                           
+    @property
+    def connected(self) -> bool:
+        """True when the fake device has received a connection from the app."""
+        return self.device._connected.is_set() and getattr(self.app, "_running", False)
+
+    def _epoch(self, target: int) -> tuple:
+        """A fingerprint of everything that can still change the UI."""
+        app = self.app
+        ui_queue = getattr(app, "_ui_queue", None)
+        return (
+            app._events_handled >= target,
+            app._event_queue.qsize(),
+            ui_queue.qsize() if ui_queue is not None else 0,
+            getattr(app, "_confirmed_revision", 0),
+            getattr(app, "_desired_revision", 0),
+            bool(getattr(app, "_render_pending", False)),
+            _rendering_in_progress(app),
+            bool(getattr(app, "_inflight", None)),
+        )
+
+    def _quiet(self, target: int) -> bool:
+        """True when nothing is in flight in either direction.
+
+        A callback can be queued just before its ``__ui__`` wake-up is
+        consumed (or while the event loop is starting). Check both queues so
+        a stable-but-nonempty UI queue cannot make ``settle`` return early.
+        The timeout remains the safety valve if a wake-up is ever lost.
+        """
+        app = self.app
+        ui_queue = getattr(app, "_ui_queue", None)
+        if (app._events_handled < target
+                or not app._event_queue.empty()
+                or (ui_queue is not None and not ui_queue.empty())):
+            return False
+
+        return not getattr(app, "_render_pending", False) \
+            and not _rendering_in_progress(app) \
+            and not getattr(app, "_inflight", None)
 
     def shows(self, text: str, timeout: float = 1.0) -> bool:
         return self.device.wait_for_text(text, timeout)
@@ -655,27 +783,64 @@ class AppTester:
     def node(self, key: str):
         return self.device.root.find(key) if self.device.root else None
 
+    def find(self, key: str):
+        """Return the rendered node for *key*, or ``None`` if absent.
+
+        This is the key-based counterpart to :attr:`texts` and mirrors the
+        lookup helper available on ``RenderedNode``/``FakeRenderer``.
+        """
+        return self.node(key)
+
     def prop(self, key: str, name: str, default=None):
         node = self.node(key)
         return default if node is None else node.props.get(name, default)
 
     def count(self, widget_type: str) -> int:
-        return len(self.device.root.find_by_type(widget_type))\
+        return len(self.device.root.find_by_type(widget_type)) \
             if self.device.root else 0
 
     def requested(self, cmd: str, timeout: float = 1.0) -> dict:
         return self.device.wait_for_request(cmd, timeout)
 
-    def _resolve(self, key_or_text: str) -> str:
+    def wait_for(self, key_or_text: str, timeout: float = 1.0) -> "AppTester":
+        """Wait until a widget with this key (or text) is on screen.
+
+        Navigation and timers rebuild the tree a moment after the event
+        that triggered them; a test that taps straight through used to
+        fail with "No widget with key …" purely on timing.
+        """
+        self._resolve(key_or_text, timeout=timeout)
+        return self
+
+    def exists(self, key_or_text: str) -> bool:
+        """True when the widget is on screen right now (no waiting)."""
+        return self._match(key_or_text) is not None
+
+    def _match(self, key_or_text: str) -> Optional[str]:
         root = self.device.root
         if root is None:
-            raise AssertionError("nothing rendered yet")
+            return None
         if root.find(key_or_text) is not None:
             return key_or_text
         for node in root.walk():
             for field in ("value", "text", "label", "title"):
                 if node.props.get(field) == key_or_text:
                     return node.key
+        return None
+
+    def _resolve(self, key_or_text: str, *, timeout: float = 0.5) -> str:
+
+        deadline = time.time() + max(0.0, timeout)
+        while True:
+            found = self._match(key_or_text)
+            if found is not None:
+                return found
+            if time.time() >= deadline:
+                break
+            time.sleep(0.01)
+        root = self.device.root
+        if root is None:
+            raise AssertionError("nothing rendered yet")
         raise AssertionError(
             f"No widget with key or text {key_or_text!r}. "
             f"Visible text: {root.texts()}")

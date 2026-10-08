@@ -1,9 +1,9 @@
 """
-Request/response plumbing for native calls.
+Request/response plumbing for optional client services.
 
-Most of the bridge is fire-and-forget: Python pushes render commands, Android
-pushes events.  Native *services* (dialogs, pickers, permissions, storage,
-location, …) need the opposite: Python asks a question and Android answers
+Most of the bridge is fire-and-forget: Python pushes render commands, the client
+pushes events. Optional services (dialogs, pickers, permissions, storage,
+location, …) need the opposite: Python asks a question and the client answers
 later, possibly seconds later and possibly never (the user may background the
 app while a date picker is open).
 
@@ -22,10 +22,15 @@ import asyncio
 import threading
 from typing import Any, Callable, Optional
 
-
 class ResultError(RuntimeError):
     """Raised when a native call fails (or times out) and the value is read."""
 
+class ResultCancelled(ResultError):
+    """The pending call was cancelled — typically the bridge shutting down.
+
+    Awaited handlers treat this as a normal shutdown signal, not an app
+    error, so no traceback is reported for it.
+    """
 
 class Result:
     """A one-shot, thread-safe holder for the answer to a native call."""
@@ -44,8 +49,6 @@ class Result:
         self._callbacks: list[Callable[[Any], Any]] = []
         self._errbacks: list[Callable[[str], Any]] = []
         self._lock = threading.Lock()
-
-                                                                           
 
     @property
     def request_id(self) -> str:
@@ -66,8 +69,6 @@ class Result:
     @property
     def error(self) -> Optional[str]:
         return self._error
-
-                                                                           
 
     def complete(self, value: Any) -> bool:
         """Resolve successfully. Returns False if already settled."""
@@ -95,15 +96,13 @@ class Result:
             _safe(cb, self._error)
         return True
 
-    def cancel(self) -> bool:
-        """Mark as cancelled; a later answer from Android will be ignored."""
+    def cancel(self, reason: str = "cancelled") -> bool:
+        """Mark as cancelled; a later answer from the client will be ignored."""
         with self._lock:
             if self._done:
                 return False
             self._cancelled = True
-        return self.fail("cancelled")
-
-                                                                           
+        return self.fail(reason)
 
     def then(self, callback: Callable[[Any], Any]) -> "Result":
         """Run *callback(value)* when the call succeeds (immediately if done)."""
@@ -180,7 +179,8 @@ class Result:
         def reject(message: str) -> None:
             def set_error() -> None:
                 if not future.done():
-                    future.set_exception(ResultError(
+                    exc_cls = ResultCancelled if self._cancelled else ResultError
+                    future.set_exception(exc_cls(
                         f"{self._cmd or 'call'} failed: {message}"))
             loop.call_soon_threadsafe(set_error)
 
@@ -195,9 +195,8 @@ class Result:
             state = f"value={self._value!r}"
         return f"<Result {self._cmd or '?'} {state}>"
 
-
 def _safe(callback: Callable, arg: Any) -> None:
     try:
         callback(arg)
-    except Exception as exc:                                
+    except Exception as exc:
         print(f"[Pydrud] result callback error: {exc}")

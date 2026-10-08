@@ -1,21 +1,21 @@
 """
 Responsive engine — real device-resolution detection and adaptive sizing.
 
-Three layers, all driven by live metrics pushed from the device:
+Three layers, all driven by live metrics reported by the connected client:
 
 - ``Breakpoints`` — the (fully customisable) window-size-class table.
-- ``MediaQuery`` — every metric the device reports: resolution, dp size,
+- ``MediaQuery`` — metrics the client reports: logical size, pixel size,
   density, dpi, orientation, safe-area insets, font scale, diagonal,
   keyboard height, dark mode, …  Plus change listeners.
 - ``Responsive`` — sizing helpers built on top: scaled dp/sp values,
   percent-of-screen units, breakpoint value pickers, grid maths.
 
-The Android bridge sends a ``ready`` event on connect **and** a ``metrics``
-event every time the window changes (rotation, split screen, foldable
-unfold, font-scale change, keyboard, insets).  ``App`` feeds both into
+The bridge sends a ``ready`` event on connect **and** a ``metrics``
+event every time the window changes (rotation, split screen, folding
+state, font-scale change, keyboard, insets). ``App`` feeds both into
 :meth:`MediaQuery.update`, which refreshes :class:`Responsive`, notifies
 listeners and re-renders the tree — so layouts genuinely follow the
-device instead of guessing once at startup.
+current window instead of guessing once at startup.
 
 Quick tour::
 
@@ -43,12 +43,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 __all__ = ["Breakpoints", "MediaQuery", "Responsive", "ScreenInfo"]
 
-
-                                                                            
-             
-                                                                            
-
-
 class Breakpoints:
     """The window size-class table — customisable per app.
 
@@ -70,10 +64,8 @@ class Breakpoints:
     large: float = 1200
     xlarge: float = 1600
 
-                                                                   
     ORDER: Tuple[str, ...] = ("compact", "medium", "expanded", "large", "xlarge")
 
-                                                           
     ALIASES: Dict[str, str] = {
         "xs": "compact",
         "small": "compact",
@@ -136,12 +128,6 @@ class Breakpoints:
             raise ValueError(
                 "Breakpoints must increase: medium < expanded < large < xlarge")
 
-
-                                                                            
-                                    
-                                                                            
-
-
 class ScreenInfo:
     """An immutable snapshot of the device metrics.
 
@@ -155,7 +141,6 @@ class ScreenInfo:
     def __init__(self, data: Dict[str, Any]):
         self._d = dict(data)
 
-                                                                             
     def __getitem__(self, item: str) -> Any:
         return self._d[item]
 
@@ -163,7 +148,9 @@ class ScreenInfo:
         return self._d.get(item, default)
 
     def as_dict(self) -> Dict[str, Any]:
-        return dict(self._d)
+        data = dict(self._d)
+        data["sdk"] = _legacy_sdk_value(data)
+        return data
 
     def __iter__(self):
         return iter(self._d)
@@ -182,33 +169,34 @@ class ScreenInfo:
         return (f"ScreenInfo({self.width}x{self.height}dp, "
                 f"{self.breakpoint}, {self.orientation})")
 
-                                        
     def __getattr__(self, item: str) -> Any:
+        if item == "sdk":
+            return _legacy_sdk_value(self._d)
         try:
             return self._d[item]
         except KeyError:
             raise AttributeError(item) from None
 
-
-                                                                            
-            
-                                                                            
-
-
 def _whole(value: float):
     """Keep dp values as ints when they are whole, so UI text reads nicely."""
     return int(value) if float(value).is_integer() else value
 
+def _legacy_sdk_value(data: Dict[str, Any]) -> int:
+    """Numeric compatibility view of the old ``MediaQuery.sdk`` metric."""
+    try:
+        value = float(data.get("platform_version", ""))
+    except (TypeError, ValueError):
+        return 0
+    return int(value) if value.is_integer() else 0
 
 def _as_float(value: Any, fallback: float) -> float:
     try:
         out = float(value)
     except (TypeError, ValueError):
         return fallback
-    if out != out:       
+    if out != out:
         return fallback
     return out
-
 
 class _CallableStr(str):
     """A string that is also callable.
@@ -221,21 +209,20 @@ class _CallableStr(str):
     def __call__(self) -> str:
         return str(self)
 
-
 class _MediaQueryMeta(type):
     """Exposes every metric as a read-only class attribute."""
 
     def __getattr__(cls, item: str) -> Any:
         data = cls.__dict__.get("_data") or {}
+        if item == "sdk":
+            return _legacy_sdk_value(data)
         if item in data:
             value = data[item]
-                                                                        
-                                                           
+
             if item in ("breakpoint", "orientation", "device_type"):
                 return _CallableStr(value)
             return value
         raise AttributeError(item)
-
 
 class MediaQuery(metaclass=_MediaQueryMeta):
     """Live device metrics — the single source of truth for responsiveness.
@@ -265,7 +252,8 @@ class MediaQuery(metaclass=_MediaQueryMeta):
     ``keyboard_height``   Visible IME height in dp (0 when hidden)
     ``dark``              True when the system is in dark mode
     ``refresh_rate``      Display refresh rate in Hz
-    ``sdk``               Android API level
+    ``platform_version``   Optional client operating-system version
+    ``sdk``                Deprecated numeric alias for older clients
     ===================== ==================================================
     """
 
@@ -287,8 +275,8 @@ class MediaQuery(metaclass=_MediaQueryMeta):
         "keyboard_height": 0,
         "dark": False,
         "refresh_rate": 60.0,
-        "sdk": 0,
-                                            
+        "platform_version": "",
+
         "orientation": "portrait",
         "breakpoint": "compact",
         "device_type": "phone",
@@ -301,12 +289,8 @@ class MediaQuery(metaclass=_MediaQueryMeta):
     _data: Dict[str, Any] = dict(_DEFAULTS)
     _listeners: List[Callable[["ScreenInfo"], None]] = []
 
-                                                                   
-                                                                           
     TABLET_SHORTEST_SIDE = 600
     DESKTOP_SHORTEST_SIDE = 900
-
-                                                                          
 
     @classmethod
     def init(
@@ -335,14 +319,15 @@ class MediaQuery(metaclass=_MediaQueryMeta):
     def update(cls, **metrics: Any) -> bool:
         """Merge raw metrics in, re-derive, sync ``Responsive``, notify.
 
-        Unknown keys are kept (forward compatible with newer Android
-        templates).  Returns ``True`` if the snapshot changed.
+        Unknown keys are kept for forward compatibility. Returns ``True`` when
+        the metrics snapshot changed.
         """
         before = dict(cls._data)
         data = cls._data
 
-                                                            
         rename = {"width_dp": "width", "height_dp": "height"}
+
+        rename["sdk"] = "platform_version"
         for key, value in metrics.items():
             if value is None:
                 continue
@@ -366,8 +351,6 @@ class MediaQuery(metaclass=_MediaQueryMeta):
         cls._px_reported = False
         Responsive._sync()
 
-                                                                          
-
     @classmethod
     def _coerce(cls) -> None:
         d = cls._data
@@ -380,8 +363,8 @@ class MediaQuery(metaclass=_MediaQueryMeta):
                     "padding_right", "keyboard_height"):
             d[key] = _whole(max(_as_float(d.get(key), 0), 0))
         d["dark"] = bool(d.get("dark", False))
+        d["platform_version"] = str(d.get("platform_version", "") or "")[:100]
 
-                                                                     
         if not cls._px_reported:
             d["width_px"] = int(round(d["width"] * d["density"]))
             d["height_px"] = int(round(d["height"] * d["density"]))
@@ -417,8 +400,6 @@ class MediaQuery(metaclass=_MediaQueryMeta):
         inches_h = d["height_px"] / dpi
         d["diagonal"] = round((inches_w ** 2 + inches_h ** 2) ** 0.5, 2)
 
-                                                                          
-
     @classmethod
     def listen(cls, callback: Callable[["ScreenInfo"], None]) -> Callable[[], None]:
         """Call *callback* whenever the metrics change (rotation, resize).
@@ -450,15 +431,15 @@ class MediaQuery(metaclass=_MediaQueryMeta):
         for callback in list(cls._listeners):
             try:
                 callback(info)
-            except Exception:                                              
+            except Exception:
                 pass
-
-                                                                          
 
     @classmethod
     def of(cls) -> Dict[str, Any]:
-        """A plain-dict snapshot of every metric."""
-        return dict(cls._data)
+        """A plain-dict snapshot of every metric, including the legacy ``sdk`` alias."""
+        data = dict(cls._data)
+        data["sdk"] = _legacy_sdk_value(data)
+        return data
 
     @classmethod
     def info(cls) -> ScreenInfo:
@@ -494,8 +475,6 @@ class MediaQuery(metaclass=_MediaQueryMeta):
         height = (cls._data["height"] - insets["top"] - insets["bottom"]
                   - cls._data.get("keyboard_height", 0))
         return (max(width, 1), max(height, 1))
-
-                                                                          
 
     @classmethod
     def is_phone(cls) -> bool:
@@ -566,12 +545,6 @@ class MediaQuery(metaclass=_MediaQueryMeta):
             return False
         return True
 
-
-                                                                            
-            
-                                                                            
-
-
 class Responsive:
     """Screen-aware sizing built on :class:`MediaQuery`.
 
@@ -598,21 +571,16 @@ class Responsive:
     _DEFAULT_MIN_FACTOR = 0.9
     _DEFAULT_MAX_FACTOR = 1.2
 
-                                                               
     _BASIS = "shortest"
 
-                                                                         
     BREAKPOINT_MEDIUM = 600
     BREAKPOINT_EXPANDED = 840
 
-                                                                     
     _screen_width: float = 360
     _screen_height: float = 640
     _density: float = 2.0
     _scale_factor: float = 1.0
     _text_scale: float = 1.0
-
-                                                                          
 
     @classmethod
     def configure(cls, *, min_factor: Optional[float] = None,
@@ -626,8 +594,7 @@ class Responsive:
         ``"shortest"`` with the shortest side (stable across rotation,
         the default) and ``"diagonal"`` with the screen diagonal.
         """
-                                                                          
-                                              
+
         new_min = cls._MIN_FACTOR if min_factor is None else float(min_factor)
         new_max = cls._MAX_FACTOR if max_factor is None else float(max_factor)
         if new_min > new_max:
@@ -652,8 +619,6 @@ class Responsive:
         cls._BASELINE_HEIGHT = 640
         cls._sync()
 
-                                                                          
-
     @classmethod
     def init(cls, width_dp: float, height_dp: float, density: float,
              text_scale: float = 1.0, **kwargs: Any) -> None:
@@ -675,8 +640,6 @@ class Responsive:
         cls._density = d["density"]
         cls._text_scale = d["text_scale"]
         cls._scale_factor = d["width"] / cls._BASELINE_WIDTH
-
-                                                                          
 
     @classmethod
     def text(cls, size: float) -> int:
@@ -723,8 +686,6 @@ class Responsive:
         """Scale an icon size (dp)."""
         return cls._scale(size)
 
-                                                                          
-
     @classmethod
     def wp(cls, percent: float) -> int:
         """*percent* of the screen **width**, in dp (``wp(50)`` = half)."""
@@ -759,8 +720,6 @@ class Responsive:
     def to_px(cls, dp: float) -> int:
         """Convert dp to physical pixels."""
         return int(round(dp * MediaQuery._data["density"]))
-
-                                                                          
 
     @classmethod
     def factor(cls) -> float:
@@ -826,8 +785,6 @@ class Responsive:
     def at_most(cls, size_class: str) -> bool:
         return MediaQuery.at_most(size_class)
 
-                                                                          
-
     @classmethod
     def value(cls, compact: Any = None, medium: Any = None,
               expanded: Any = None, **aliases: Any) -> Any:
@@ -846,7 +803,6 @@ class Responsive:
         """
         default = aliases.pop("default", None)
 
-                                                    
         orientation = MediaQuery._data["orientation"]
         if orientation in aliases and aliases[orientation] is not None:
             return aliases[orientation]
@@ -864,7 +820,6 @@ class Responsive:
             if value is not None and resolved[key] is None:
                 resolved[key] = value
 
-                                                                        
         last = default
         for name in Breakpoints.ORDER:
             if resolved[name] is None:
@@ -922,8 +877,6 @@ class Responsive:
         """Unclamped linear scaling (``value * screen_width / baseline``)."""
         return round(value * cls._scale_factor)
 
-                                                                          
-
     @classmethod
     def _basis_factor(cls) -> float:
         d = MediaQuery._data
@@ -944,6 +897,4 @@ class Responsive:
     def _scale(cls, value: float) -> int:
         return int(round(value * cls._factor()))
 
-
-                                          
 Responsive._sync()

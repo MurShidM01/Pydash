@@ -15,7 +15,6 @@ from typing import Callable, Optional
 
 from pydrud.widgets.base import Widget
 
-                                                                
 GESTURES = (
     "tap",
     "double_tap",
@@ -29,7 +28,6 @@ GESTURES = (
     "pan_end",
     "scale",
 )
-
 
 class GestureDetector(Widget):
     """Detect taps, double taps, swipes, drags and pinch on any child.
@@ -102,7 +100,6 @@ class GestureDetector(Widget):
         })
         return props
 
-
 class InkWell(Widget):
     """A tappable area that draws the Material ripple on touch."""
 
@@ -139,7 +136,6 @@ class InkWell(Widget):
             "enabled": self.enabled,
         })
         return {k: v for k, v in props.items() if v is not None}
-
 
 class Dismissible(Widget):
     """Swipe-to-dismiss a list row, with an optional coloured background.
@@ -187,7 +183,6 @@ class Dismissible(Widget):
             "confirm": self.confirm,
         })
         return {k: v for k, v in props.items() if v is not None}
-
 
 class Draggable(Widget):
     """Makes a child draggable; emits ``drag`` with the live offset."""

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import warnings
 
-from pydrud.runtime.navigation import *                   
-from pydrud.runtime.navigation import (              
+from pydrud.runtime.navigation import *
+from pydrud.runtime.navigation import (
     TRANSITIONS, NavigationStack, Route, Router, parse_url,
 )
 

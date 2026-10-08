@@ -3,11 +3,31 @@ Layout widgets: Container, Column, Row, Center, Spacer.
 """
 
 from __future__ import annotations
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from pydrud.widgets.base import Widget
 from pydrud.widgets.styling import Border, EdgeInsets, Style
 
+_AXIS_SIZES = {
+    "min": "wrap", "max": "match",
+    "wrap": "wrap", "wrap_content": "wrap", "auto": "wrap",
+    "match": "match", "match_parent": "match", "fill": "match",
+}
+
+def _axis_size(value: Any, name: str) -> Any:
+    """Normalise ``main_axis_size`` / ``cross_axis_size`` to a dimension.
+
+    Flutter's ``MainAxisSize.min``/``.max`` are accepted verbatim, as are
+    Pydrud's own ``"wrap"``/``"match"`` spellings and raw numbers.
+    """
+    if value is None or isinstance(value, (int, float)):
+        return value
+    key = str(value).strip().lower()
+    if key not in _AXIS_SIZES:
+        raise ValueError(
+            f"{name} must be 'min' or 'max' (or 'wrap'/'match'/a number), "
+            f"got {value!r}")
+    return _AXIS_SIZES[key]
 
 class Container(Widget):
     """A box that wraps a single child with padding, margin, bg, border, etc."""
@@ -22,6 +42,7 @@ class Container(Widget):
         padding: Optional[Union[EdgeInsets, float, int, dict]] = None,
         margin: Optional[Union[EdgeInsets, float, int, dict]] = None,
         bg: Optional[str] = None,
+        gradient: Optional[Any] = None,
         border_radius: Optional[float] = None,
         border: Optional[Union[Border, dict]] = None,
         width: Optional[Union[float, str]] = None,
@@ -35,12 +56,10 @@ class Container(Widget):
     ):
         super().__init__(key=key, style=style, expand=expand, visible=visible, **kwargs)
 
-                                                           
         actual_child = child if child is not None else content
         if actual_child is not None:
             self.children = [actual_child]
 
-                                                   
         s = Style()
         if padding is not None:
             s.padding(padding if isinstance(padding, EdgeInsets) else EdgeInsets.all(padding) if isinstance(padding, (int, float)) else EdgeInsets(**padding))
@@ -48,6 +67,8 @@ class Container(Widget):
             s.margin(margin if isinstance(margin, EdgeInsets) else EdgeInsets.all(margin) if isinstance(margin, (int, float)) else EdgeInsets(**margin))
         if bg:
             s.bg(bg)
+        if gradient is not None:
+            s.gradient(gradient)
         if border_radius is not None:
             s.border_radius(border_radius)
         if border is not None:
@@ -64,7 +85,6 @@ class Container(Widget):
             s.alignment(alignment)
         self.style = {**s.build(), **self.style}
 
-
 class Column(Widget):
     """Vertical layout — children are stacked top-to-bottom.
 
@@ -73,6 +93,14 @@ class Column(Widget):
     along the main axis ("top" | "center" | "bottom")::
 
         Column(children=[card], vertical_alignment="center", expand=1)
+
+    ``main_axis_size`` / ``cross_axis_size`` mirror Flutter: ``"min"``
+    hugs the content, ``"max"`` (the default for the main axis) fills the
+    parent. A ``Column`` fills the width by default; pass
+    ``main_axis_size="min"`` for a content-height column inside a row of
+    siblings::
+
+        Row(children=[Column(main_axis_size="min", children=[...]), ...])
     """
 
     _widget_type = "Column"
@@ -84,6 +112,8 @@ class Column(Widget):
         spacing: float = 0,
         horizontal_alignment: Optional[str] = None,
         vertical_alignment: Optional[str] = None,
+        main_axis_size: Optional[str] = None,
+        cross_axis_size: Optional[str] = None,
         key: Optional[str] = None,
         style: Optional[dict] = None,
         expand: Optional[int] = None,
@@ -99,13 +129,17 @@ class Column(Widget):
             self.style["crossAxisAlignment"] = horizontal_alignment
         if vertical_alignment:
             self.style["mainAxisAlignment"] = vertical_alignment
+
+        if main_axis_size is not None:
+            self.style["height"] = _axis_size(main_axis_size, "main_axis_size")
+        if cross_axis_size is not None:
+            self.style["width"] = _axis_size(cross_axis_size, "cross_axis_size")
         if scroll:
             self.style["scroll"] = True
 
     def add(self, *widgets: Widget) -> "Column":
         self.children.extend(widgets)
         return self
-
 
 class Row(Widget):
     """Horizontal layout — children are stacked left-to-right.
@@ -115,6 +149,14 @@ class Row(Widget):
     along the main axis ("start" | "center" | "end")::
 
         Row(children=[reset, tap], horizontal_alignment="center")
+
+    ``main_axis_size`` / ``cross_axis_size`` mirror Flutter: ``"min"``
+    hugs the content, ``"max"`` (the default for the main axis) fills the
+    parent. A ``Row`` fills the width by default, so give side-by-side
+    children a weight (``expand=1``) or a content width::
+
+        Row(children=[_stat("Score"), _stat("Combo")])          # each hugs
+        Row(children=[_stat("Score", expand=1), _stat("Combo", expand=1)])
     """
 
     _widget_type = "Row"
@@ -126,6 +168,8 @@ class Row(Widget):
         spacing: float = 0,
         vertical_alignment: Optional[str] = None,
         horizontal_alignment: Optional[str] = None,
+        main_axis_size: Optional[str] = None,
+        cross_axis_size: Optional[str] = None,
         key: Optional[str] = None,
         style: Optional[dict] = None,
         expand: Optional[int] = None,
@@ -141,13 +185,17 @@ class Row(Widget):
             self.style["crossAxisAlignment"] = vertical_alignment
         if horizontal_alignment:
             self.style["mainAxisAlignment"] = horizontal_alignment
+
+        if main_axis_size is not None:
+            self.style["width"] = _axis_size(main_axis_size, "main_axis_size")
+        if cross_axis_size is not None:
+            self.style["height"] = _axis_size(cross_axis_size, "cross_axis_size")
         if scroll:
             self.style["scroll"] = True
 
     def add(self, *widgets: Widget) -> "Row":
         self.children.extend(widgets)
         return self
-
 
 class Center(Widget):
     """Centres its child both horizontally and vertically."""
@@ -171,7 +219,6 @@ class Center(Widget):
             self.children = [actual_child]
         self.style["alignment"] = "center"
 
-
 class Spacer(Widget):
     """Empty space (flexible). Takes up remaining space in a Row/Column."""
 
@@ -187,7 +234,6 @@ class Spacer(Widget):
         **kwargs,
     ):
         super().__init__(key=key, style=style, expand=expand, visible=visible, **kwargs)
-
 
 class Divider(Widget):
     """A hairline rule.
@@ -225,7 +271,6 @@ class Divider(Widget):
             self.style["margin"] = EdgeInsets(
                 left=indent, right=end_indent).to_dict()
 
-
 class Stack(Widget):
     """Overlays children on top of each other (like Flutter's ``Stack``).
 
@@ -258,7 +303,6 @@ class Stack(Widget):
     def add(self, *widgets: Widget) -> "Stack":
         self.children.extend(widgets)
         return self
-
 
 class Positioned(Widget):
     """Positions a single child at absolute offsets inside a :class:`Stack`."""
@@ -294,7 +338,6 @@ class Positioned(Widget):
         if height is not None:
             self.style["height"] = height
 
-
 class SizedBox(Widget):
     """A fixed-size empty box — handy for precise gaps."""
 
@@ -317,7 +360,6 @@ class SizedBox(Widget):
         self.style["width"] = width
         self.style["height"] = height
 
-
 class Padding(Widget):
     """Applies padding around a single child."""
 
@@ -338,7 +380,6 @@ class Padding(Widget):
         if child is not None:
             self.children = [child]
         self.style["padding"] = _edge_dict(padding)
-
 
 class Card(Widget):
     """A rounded surface — Material 3 card.
@@ -380,8 +421,7 @@ class Card(Widget):
         actual_child = child if child is not None else content
         if actual_child is not None:
             self.children = [actual_child]
-                                                                   
-                                                        
+
         if elevation is None:
             elevation = Tokens.elevation_card
         if border_radius is None:
@@ -396,8 +436,7 @@ class Card(Widget):
             "margin": _edge_dict(margin),
             "width": "match",
         }
-                                                                      
-                                               
+
         if outlined is None:
             outlined = elevation <= 0
         if outlined:
@@ -407,7 +446,6 @@ class Card(Widget):
             base.setdefault("feedback", True)
         base.update(self.style)
         self.style = base
-
 
 class ListView(Widget):
     """A scrollable list of children (vertical by default)."""
@@ -440,7 +478,6 @@ class ListView(Widget):
         self.children.extend(widgets)
         return self
 
-
 class GridView(Widget):
     """A simple fixed-column grid of children."""
 
@@ -468,6 +505,64 @@ class GridView(Widget):
         self.children.extend(widgets)
         return self
 
+class PageView(Widget):
+    """A swipeable, snapping page container — one child per page.
+
+    Each child is a full-size page; a horizontal swipe snaps to the next.
+    ``initial_page`` is the page shown on first build (and whenever the value
+    changes). ``peek`` reveals a sliver of the neighbouring pages — the
+    Material carousel look — by padding the pager. ``on_change`` receives
+    ``{"index": page}`` once the pager settles on a new page.
+
+    The pager fills both axes by default, so give it a bounded parent (a
+    ``SizedBox``, an ``Expanded`` or a full-screen body) or an explicit
+    ``style={"height": …}``.
+    """
+
+    _widget_type = "PageView"
+
+    def __init__(
+        self,
+        children: Optional[list[Widget]] = None,
+        *,
+        initial_page: int = 0,
+        orientation: str = "horizontal",
+        peek: Optional[int] = None,
+        key: Optional[str] = None,
+        style: Optional[dict] = None,
+        expand: Optional[int] = None,
+        visible: bool = True,
+        **kwargs,
+    ):
+        super().__init__(key=key, style=style, expand=expand, visible=visible,
+                         **kwargs)
+        self.children = list(children) if children else []
+        if orientation not in ("horizontal", "vertical"):
+            raise ValueError(
+                "PageView orientation must be 'horizontal' or 'vertical'")
+        self._initial_page = max(0, int(initial_page))
+        self.style["orientation"] = orientation
+        if peek is not None:
+            if peek < 0:
+                raise ValueError("PageView peek must be >= 0")
+            self.style["peek"] = int(peek)
+        self.style.setdefault("width", "match")
+        self.style.setdefault("height", "match")
+
+    @property
+    def initial_page(self) -> int:
+        return self._initial_page
+
+    @initial_page.setter
+    def initial_page(self, value: int):
+        self._initial_page = max(0, int(value))
+
+    def add(self, *widgets: Widget) -> "PageView":
+        self.children.extend(widgets)
+        return self
+
+    def _serialise_props(self) -> dict:
+        return {"initialPage": self._initial_page}
 
 def _edge_dict(value: Union[EdgeInsets, float, int, dict]) -> dict:
     """Normalise padding/margin input into a serialisable dict."""

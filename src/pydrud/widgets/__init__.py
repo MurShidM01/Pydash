@@ -1,27 +1,35 @@
 """Widget system for Pydrud."""
 
 from pydrud.widgets.base import Widget, assign_stable_keys, validate_tree_keys
-from pydrud.widgets.styling import Style, EdgeInsets, Alignment, FontStyle, Border, BorderSide, BorderRadius
+from pydrud.widgets.styling import (
+    Style, EdgeInsets, Alignment, FontStyle, Border, BorderSide, BorderRadius,
+    LinearGradient, RadialGradient, SweepGradient,
+)
 from pydrud.widgets.layout import (
     Container, Column, Row, Center, Spacer, Divider,
-    Stack, Positioned, SizedBox, Padding, Card, ListView, GridView,
+    Stack, Positioned, SizedBox, Padding, Card, ListView, GridView, PageView,
 )
 from pydrud.widgets.basic import (
     Text, Button, FilledButton, TonalButton, OutlinedButton, TextButton,
     ElevatedButton, IconButton, TextField, SearchField, EmailField,
     PasswordField, NumberField, PhoneField, UrlField, Image, SvgPicture, Icon, Checkbox,
-    Switch, ProgressBar, LinearProgress, Slider, Dropdown, Radio,
+    Switch, ProgressBar, LinearProgress, Slider, RangeSlider, Dropdown, Radio,
 )
 from pydrud.widgets.theme import (Colors, Icons, Theme, ColorScheme, Typography,
-                                  Spacing, Radius, Elevation, Motion)
+                                  Spacing, Radius, Elevation, Motion,
+                                  TextTheme, ThemeExtension)
 from pydrud.widgets.tokens import Tokens
 from pydrud.widgets.material import (
-    ListTile, ExpansionTile, Chip, AssistChip, FilterChip, InputChip,
+    ListTile, ExpansionTile, ExpansionPanel, ExpansionPanelList,
+    Chip, AssistChip, FilterChip, InputChip,
     SuggestionChip, Badge, Avatar, Banner, Tooltip,
-    Tab, Tabs, TabBar, NavItem, BottomNavigationBar, NavigationBar,
+    Tab, Tabs, TabBar, NavItem, NavigationItem, NavigationDestination,
+    BottomNavigationBar, NavigationBar,
     NavigationRail, Drawer,
     SegmentedButton, SearchBar, Rating, CircularProgress, Skeleton,
     RefreshIndicator, Stepper, WebView, VideoPlayer, Chart,
+    MenuItem, MenuDivider, PopupMenu, PopupMenuButton, DropdownMenu,
+    AlertDialog, Dialog, ModalBottomSheet,
 )
 from pydrud.widgets.gestures import GestureDetector, InkWell, Dismissible, Draggable
 from pydrud.widgets.animation import (
@@ -35,19 +43,23 @@ from pydrud.widgets.forms import (
 from pydrud.widgets.canvas import Canvas, Paint, Path, radial_point
 from pydrud.widgets.advanced import (
     CameraPreview, QRScanner, InfiniteList, MapView, Markdown, Marker,
-    ReorderableList, RichText, Span,
+    NativeView, ReorderableList, RichText, Span,
 )
 from pydrud.widgets.app_bar import AppBar
 from pydrud.widgets.scaffold import Scaffold
 from pydrud.widgets.fab import FloatingActionButton
 from pydrud.widgets.responsive import (
-    AdaptiveLayout, ResponsiveBuilder, ResponsiveGrid, SafeArea, ShowWhen,
+    AdaptiveLayout, Constraints, LayoutBuilder, ResponsiveBuilder,
+    ResponsiveGrid, SafeArea, ShowWhen,
 )
+from pydrud.widgets.conditional import Hidden, Visible
 from pydrud.widgets.presets import (
     ActionChip, Align, AssetImage, BackButton, ButtonBar, Caption,
     CheckboxListTile, ChoiceChip, CircleAvatar, CircleImage, CloseButton,
     ColoredBox, ConstrainedBox, DecoratedBox, EmptyState, ErrorState, Expanded,
-    Flexible, FormSection, Gap, Heading, InfoCard, Label, LimitedBox, Link,
+    Flexible, Flex, FractionallySizedBox, FittedBox, MetricCard, DataTable,
+    Timeline, Carousel,
+    FormSection, Gap, Heading, InfoCard, Label, LimitedBox, Link,
     LoadingState, MenuButton, NavigationTile, NetworkImage, Placeholder,
     RadioListTile, SectionHeader, SettingsTile, SingleChildScrollView, StatCard,
     Subtitle, SwitchListTile, Title, VerticalDivider, Wrap,
@@ -57,10 +69,11 @@ __all__ = [
     "Widget",
     "assign_stable_keys",
     "validate_tree_keys",
-            
+
     "Container",
     "Column",
     "Row",
+    "Flex",
     "Center",
     "Spacer",
     "Divider",
@@ -71,7 +84,8 @@ __all__ = [
     "Card",
     "ListView",
     "GridView",
-           
+    "PageView",
+
     "Text",
     "Button",
     "FilledButton",
@@ -95,13 +109,14 @@ __all__ = [
     "ProgressBar",
     "LinearProgress",
     "Slider",
+    "RangeSlider",
     "Dropdown",
     "Radio",
-               
+
     "AppBar",
     "Scaffold",
     "FloatingActionButton",
-             
+
     "Style",
     "EdgeInsets",
     "Alignment",
@@ -109,6 +124,9 @@ __all__ = [
     "Border",
     "BorderSide",
     "BorderRadius",
+    "LinearGradient",
+    "RadialGradient",
+    "SweepGradient",
     "Colors",
     "Spacing",
     "Radius",
@@ -119,9 +137,13 @@ __all__ = [
     "Theme",
     "ColorScheme",
     "Typography",
-              
+    "TextTheme",
+    "ThemeExtension",
+
     "ListTile",
     "ExpansionTile",
+    "ExpansionPanel",
+    "ExpansionPanelList",
     "Chip",
     "AssistChip",
     "FilterChip",
@@ -135,6 +157,8 @@ __all__ = [
     "Tabs",
     "TabBar",
     "NavItem",
+    "NavigationItem",
+    "NavigationDestination",
     "BottomNavigationBar",
     "NavigationBar",
     "NavigationRail",
@@ -149,12 +173,22 @@ __all__ = [
     "WebView",
     "VideoPlayer",
     "Chart",
-              
+
+    "AlertDialog",
+    "Dialog",
+    "ModalBottomSheet",
+
+    "MenuItem",
+    "MenuDivider",
+    "PopupMenu",
+    "PopupMenuButton",
+    "DropdownMenu",
+
     "GestureDetector",
     "InkWell",
     "Dismissible",
     "Draggable",
-               
+
     "Animation",
     "AnimatedContainer",
     "AnimatedOpacity",
@@ -166,7 +200,7 @@ __all__ = [
     "ScaleIn",
     "Hero",
     "animate",
-           
+
     "Form",
     "FormField",
     "required",
@@ -180,7 +214,7 @@ __all__ = [
     "pattern",
     "matches",
     "custom",
-                                                              
+
     "Canvas",
     "Paint",
     "Path",
@@ -194,15 +228,27 @@ __all__ = [
     "Markdown",
     "ReorderableList",
     "InfiniteList",
-                              
+    "NativeView",
+
     "ResponsiveBuilder",
+    "LayoutBuilder",
+    "Constraints",
     "AdaptiveLayout",
     "ResponsiveGrid",
     "ShowWhen",
     "SafeArea",
-                                                   
+
+    "Visible",
+    "Hidden",
+
     "Expanded",
     "Flexible",
+    "FractionallySizedBox",
+    "FittedBox",
+    "MetricCard",
+    "DataTable",
+    "Timeline",
+    "Carousel",
     "Align",
     "ColoredBox",
     "DecoratedBox",

@@ -33,12 +33,6 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
 _PHONE_RE = re.compile(r"^\+?[0-9 ()\-]{7,20}$")
 _URL_RE = re.compile(r"^https?://[^\s/$.?#].[^\s]*$", re.IGNORECASE)
 
-
-                                                                            
-                                                                 
-                                                                            
-
-
 def required(message: str = "This field is required") -> Validator:
     def _validate(value: Any) -> Optional[str]:
         if value is None:
@@ -53,7 +47,6 @@ def required(message: str = "This field is required") -> Validator:
 
     return _validate
 
-
 def min_length(n: int, message: Optional[str] = None) -> Validator:
     def _validate(value: Any) -> Optional[str]:
         if value in (None, ""):
@@ -63,7 +56,6 @@ def min_length(n: int, message: Optional[str] = None) -> Validator:
         return None
 
     return _validate
-
 
 def max_length(n: int, message: Optional[str] = None) -> Validator:
     def _validate(value: Any) -> Optional[str]:
@@ -75,7 +67,6 @@ def max_length(n: int, message: Optional[str] = None) -> Validator:
 
     return _validate
 
-
 def email(message: str = "Enter a valid email address") -> Validator:
     def _validate(value: Any) -> Optional[str]:
         if value in (None, ""):
@@ -83,7 +74,6 @@ def email(message: str = "Enter a valid email address") -> Validator:
         return None if _EMAIL_RE.match(str(value).strip()) else message
 
     return _validate
-
 
 def phone(message: str = "Enter a valid phone number") -> Validator:
     def _validate(value: Any) -> Optional[str]:
@@ -93,7 +83,6 @@ def phone(message: str = "Enter a valid phone number") -> Validator:
 
     return _validate
 
-
 def url(message: str = "Enter a valid URL") -> Validator:
     def _validate(value: Any) -> Optional[str]:
         if value in (None, ""):
@@ -101,7 +90,6 @@ def url(message: str = "Enter a valid URL") -> Validator:
         return None if _URL_RE.match(str(value).strip()) else message
 
     return _validate
-
 
 def numeric(message: str = "Enter a number") -> Validator:
     def _validate(value: Any) -> Optional[str]:
@@ -114,7 +102,6 @@ def numeric(message: str = "Enter a number") -> Validator:
         return None
 
     return _validate
-
 
 def between(low: float, high: float, message: Optional[str] = None) -> Validator:
     def _validate(value: Any) -> Optional[str]:
@@ -130,7 +117,6 @@ def between(low: float, high: float, message: Optional[str] = None) -> Validator
 
     return _validate
 
-
 def pattern(regex: str, message: str = "Invalid format") -> Validator:
     compiled = re.compile(regex)
 
@@ -141,20 +127,18 @@ def pattern(regex: str, message: str = "Invalid format") -> Validator:
 
     return _validate
 
-
 def matches(other_field: str, message: Optional[str] = None) -> Validator:
     """Cross-field check, e.g. "confirm password". Bound by the Form."""
 
     def _validate(value: Any) -> Optional[str]:
-                                                                       
+
         peer = getattr(_validate, "_peer", None)
         if peer is None or value == peer:
             return None
         return message or f"Must match {other_field}"
 
-    _validate._field = other_field                              
+    _validate._field = other_field
     return _validate
-
 
 def custom(fn: Callable[[Any], bool], message: str = "Invalid value") -> Validator:
     """Wrap a boolean predicate as a validator."""
@@ -166,12 +150,6 @@ def custom(fn: Callable[[Any], bool], message: str = "Invalid value") -> Validat
             return message
 
     return _validate
-
-
-                                                                            
-      
-                                                                            
-
 
 class FormField(Widget):
     """Wraps an input widget with a label, helper text and an error slot."""
@@ -199,7 +177,7 @@ class FormField(Widget):
         self.validators: list[Validator] = list(validators or [])
         self.error: Optional[str] = None
         self.touched = False
-        self.value: Any = initial if initial is not None\
+        self.value: Any = initial if initial is not None \
             else _read_value(control)
         self.children = [control]
         self._control = control
@@ -216,7 +194,7 @@ class FormField(Widget):
         def _on_change(event):
             self.value = _event_value(event, self.value)
             self.touched = True
-            if self.error:                                               
+            if self.error:
                 self.validate()
             if user_handler is not None:
                 user_handler(event)
@@ -255,7 +233,6 @@ class FormField(Widget):
         })
         return {k: v for k, v in props.items() if v is not None}
 
-
 class Form(Widget):
     """A validating container for input widgets."""
 
@@ -282,13 +259,11 @@ class Form(Widget):
         for field in fields:
             self.add_field(field)
 
-                                                                           
-
     def add_field(self, widget: Widget) -> "Form":
         """Add a FormField, or any widget carrying ``name=``/``validators=``."""
         field = widget if isinstance(widget, FormField) else _promote(widget)
         if field is None:
-            self.children.append(widget)                                         
+            self.children.append(widget)
             return self
         if field.name in self.fields:
             raise ValueError(f"Duplicate form field name {field.name!r}")
@@ -310,8 +285,6 @@ class Form(Widget):
                 self._on_change(self.values)
 
         control.event_handlers["change"] = _on_change
-
-                                                                           
 
     @property
     def values(self) -> dict:
@@ -349,8 +322,6 @@ class Form(Widget):
             field.error = message
         return self
 
-                                                                           
-
     def validate(self) -> dict:
         """Validate every field and return ``{name: error}`` (empty = valid)."""
         values = self.values
@@ -358,7 +329,7 @@ class Form(Widget):
             for validator in field.validators:
                 peer_name = getattr(validator, "_field", None)
                 if peer_name is not None:
-                    validator._peer = values.get(peer_name)                              
+                    validator._peer = values.get(peer_name)
             field.validate()
         return self.errors
 
@@ -388,12 +359,6 @@ class Form(Widget):
         })
         return props
 
-
-                                                                            
-         
-                                                                            
-
-
 def _event_value(event: Any, fallback: Any) -> Any:
     """Read the new value from an Event, a raw data dict, or a bare value."""
     value = getattr(event, "value", None)
@@ -405,7 +370,6 @@ def _event_value(event: Any, fallback: Any) -> Any:
             if name in data:
                 return data[name]
     return fallback
-
 
 def _promote(widget: Widget) -> Optional[FormField]:
     """Turn ``TextField(name=..., validators=[...])`` into a FormField."""
@@ -421,7 +385,6 @@ def _promote(widget: Widget) -> Optional[FormField]:
     return FormField(str(name), widget, label=label, helper=helper,
                      validators=validators or [])
 
-
 def _read_value(control: Widget) -> Any:
     for attr in ("value", "_value", "checked", "text"):
         if hasattr(control, attr):
@@ -431,7 +394,6 @@ def _read_value(control: Widget) -> Any:
         if attr in props:
             return props[attr]
     return None
-
 
 def _write_value(control: Widget, value: Any) -> None:
     for attr in ("value", "_value", "checked"):

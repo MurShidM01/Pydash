@@ -1,9 +1,9 @@
 """
 Background work, timers and rate limiting.
 
-Pydrud dispatches every UI event on one thread, exactly like Android's main
-looper.  Anything slow (HTTP, disk, sleeping) must therefore move off that
-thread or the UI freezes.  This module provides the three primitives that
+Pydrud dispatches every UI event on one thread. Anything slow (HTTP, disk,
+sleeping) must therefore move off that thread or the UI freezes. This module
+provides the three primitives that
 cover nearly all real app needs:
 
 * :class:`TaskRunner` — a small daemon thread pool (``page.run_task``) that
@@ -23,7 +23,6 @@ import time
 import traceback
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Optional
-
 
 class PydrudFuture:
     """Future facade that preserves failures while supporting legacy result semantics."""
@@ -58,7 +57,6 @@ class PydrudFuture:
     def __getattr__(self, name):
         return getattr(self._future, name)
 
-
 class TaskRunner:
     """Runs callables (and coroutines) off the UI thread."""
 
@@ -71,8 +69,6 @@ class TaskRunner:
         self._lock = threading.Lock()
         self._timers: list["Timer"] = []
         self._closed = False
-
-                                                                           
 
     def run(self, fn: Callable, *args, **kwargs) -> PydrudFuture:
         """Run *fn* on a worker thread and return a :class:`Future`.
@@ -96,11 +92,9 @@ class TaskRunner:
 
                 return asyncio.run(value)
             return value
-        except BaseException as exc:                                                       
+        except BaseException as exc:
             self._report(exc)
             raise
-
-                                                                           
 
     def after(self, delay: float, fn: Callable, *args, **kwargs) -> "Timer":
         """Run *fn* once after *delay* seconds."""
@@ -109,9 +103,15 @@ class TaskRunner:
         timer.start()
         return timer
 
-    def every(self, interval: float, fn: Callable, *args, **kwargs) -> "Timer":
-        """Run *fn* every *interval* seconds until cancelled."""
-        timer = Timer(interval, fn, args, kwargs, repeat=True, runner=self)
+    def every(self, interval: float, fn: Callable, *args,
+              max_errors: Optional[int] = None, **kwargs) -> "Timer":
+        """Run *fn* every *interval* seconds until cancelled.
+
+        ``max_errors`` cancels the timer after that many consecutive
+        failures instead of letting a permanently broken tick run forever.
+        """
+        timer = Timer(interval, fn, args, kwargs, repeat=True, runner=self,
+                      max_errors=max_errors)
         self._track(timer)
         timer.start()
         return timer
@@ -120,8 +120,6 @@ class TaskRunner:
         with self._lock:
             self._timers = [t for t in self._timers if t.active]
             self._timers.append(timer)
-
-                                                                           
 
     def shutdown(self, wait: bool = False) -> None:
         with self._lock:
@@ -154,13 +152,25 @@ class TaskRunner:
         print("[Pydrud] task error:", exc)
         traceback.print_exc()
 
-
 class Timer:
-    """A cancellable one-shot or repeating timer."""
+    """A cancellable one-shot or repeating timer.
+
+    A repeating timer is an error boundary: a callback that raises is
+    reported and the timer keeps ticking, because one dropped frame must
+    not kill a game loop. Identical consecutive failures are collapsed in
+    the log, ``max_errors`` cancels a timer that only ever fails, and
+    :attr:`errors` / :attr:`consecutive_errors` / :attr:`last_error` say
+    what happened::
+
+        Timer(1 / 60, tick, repeat=True, max_errors=120).start()
+    """
+
+    ERROR_LOG_LIMIT = 3
 
     def __init__(self, interval: float, fn: Callable, args: tuple = (),
                  kwargs: Optional[dict] = None, *, repeat: bool = False,
-                 runner: Optional[TaskRunner] = None):
+                 runner: Optional[TaskRunner] = None,
+                 max_errors: Optional[int] = None):
         self.interval = max(0.0, float(interval))
         self.repeat = bool(repeat)
         self._fn = fn
@@ -171,9 +181,19 @@ class Timer:
         self._thread: Optional[threading.Thread] = None
         self.ticks = 0
 
+        self.errors = 0
+
+        self.consecutive_errors = 0
+
+        self.last_error: Optional[BaseException] = None
+
+        self.max_errors: Optional[int] = (None if max_errors is None
+                                          else max(1, int(max_errors)))
+        self._last_error_text = ""
+
     @property
     def active(self) -> bool:
-        return self._thread is not None and self._thread.is_alive()\
+        return self._thread is not None and self._thread.is_alive() \
             and not self._cancelled.is_set()
 
     def start(self) -> "Timer":
@@ -191,17 +211,41 @@ class Timer:
         while not self._cancelled.is_set():
             if self._cancelled.wait(self.interval):
                 return
+
+            if self._cancelled.is_set():
+                return
             try:
                 self._fn(*self._args, **self._kwargs)
                 self.ticks += 1
-            except BaseException as exc:                
-                if self._runner is not None:
-                    self._runner._report(exc)
-                else:
-                    print("[Pydrud] timer error:", exc)
+                self.consecutive_errors = 0
+                self._last_error_text = ""
+            except BaseException as exc:
+                self._record_error(exc)
+                if (self.max_errors is not None
+                        and self.consecutive_errors >= self.max_errors):
+                    print(f"[Pydrud] timer cancelled after "
+                          f"{self.consecutive_errors} consecutive errors: "
+                          f"{exc}")
+                    self.cancel()
+                    return
             if not self.repeat:
                 return
 
+    def _record_error(self, exc: BaseException) -> None:
+        self.errors += 1
+        self.consecutive_errors += 1
+        self.last_error = exc
+        if self._runner is not None:
+            self._runner._report(exc)
+            return
+        text = f"{type(exc).__name__}: {exc}"
+        repeated = text == self._last_error_text
+        self._last_error_text = text
+        if not repeated or self.consecutive_errors <= self.ERROR_LOG_LIMIT:
+            print("[Pydrud] timer error:", exc)
+        elif self.consecutive_errors == self.ERROR_LOG_LIMIT + 1:
+            print(f"[Pydrud] timer error repeated — further identical "
+                  f"errors suppressed ({text})")
 
 def debounce(seconds: float):
     """Delay a call until *seconds* have passed without another call.
@@ -224,13 +268,12 @@ def debounce(seconds: float):
                 state["timer"] = new_timer
                 new_timer.start()
 
-        wrapper.cancel = lambda: state["timer"] and state["timer"].cancel()                              
+        wrapper.cancel = lambda: state["timer"] and state["timer"].cancel()
         wrapper.__name__ = getattr(fn, "__name__", "debounced")
         wrapper.__doc__ = fn.__doc__
         return wrapper
 
     return decorator
-
 
 def throttle(seconds: float):
     """Allow at most one call per *seconds* (leading edge)."""
@@ -250,5 +293,39 @@ def throttle(seconds: float):
         wrapper.__name__ = getattr(fn, "__name__", "throttled")
         wrapper.__doc__ = fn.__doc__
         return wrapper
+
+    return decorator
+
+GLOBAL_JOBS: dict[str, Callable] = {}
+
+def job(name_or_fn: Any = None) -> Callable:
+    """Decorator registering a background job by name or callable.
+
+    Can be used as ``@job("sync_data")`` or ``@job``.
+
+    Example::
+
+        @job("refresh")
+        def refresh_job(inputs):
+            ...
+
+        @job
+        def daily_sync():
+            ...
+    """
+    if callable(name_or_fn):
+        fn = name_or_fn
+        name = getattr(fn, "__name__", "job")
+        GLOBAL_JOBS[name] = fn
+        return fn
+
+    name = str(name_or_fn) if name_or_fn is not None else None
+
+    def decorator(fn: Callable) -> Callable:
+        if not callable(fn):
+            raise TypeError("background job must be callable")
+        job_name = name or getattr(fn, "__name__", "job")
+        GLOBAL_JOBS[job_name] = fn
+        return fn
 
     return decorator

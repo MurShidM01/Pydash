@@ -26,15 +26,13 @@ from pydrud.core.results import Result
 
 DEFAULT_TIMEOUT = 20.0
 
-
 def user_agent() -> str:
     """Versioned client identity — never a stale hardcoded string."""
     try:
         from pydrud import __version__
         return f"Pydrud/{__version__} (Android)"
-    except Exception:                                                        
+    except Exception:
         return "Pydrud/2 (Android)"
-
 
 class HttpResponse:
     """A completed HTTP response."""
@@ -71,7 +69,6 @@ class HttpResponse:
     def __repr__(self) -> str:
         return f"<HttpResponse {self.status} {self.url} {len(self.body)}b>"
 
-
 class Http:
     """An async-by-default HTTP client bound to a page's task runner."""
 
@@ -82,8 +79,6 @@ class Http:
         self.base_url = base_url.rstrip("/")
         self.headers = dict(headers or {})
         self.timeout = float(timeout)
-
-                                                                           
 
     def configure(self, *, base_url: Optional[str] = None,
                   headers: Optional[dict] = None,
@@ -100,8 +95,6 @@ class Http:
         """Attach an ``Authorization: Bearer`` header to every request."""
         self.headers["Authorization"] = f"Bearer {token}"
         return self
-
-                                                                           
 
     def get(self, url: str, *, params: Optional[dict] = None, **kw) -> Result:
         return self.request("GET", url, params=params, **kw)
@@ -129,7 +122,7 @@ class Http:
             try:
                 request = urllib.request.Request(self._url(url),
                                                  headers=self.headers)
-                with urllib.request.urlopen(request, timeout=self.timeout) as r,\
+                with urllib.request.urlopen(request, timeout=self.timeout) as r, \
                         open(dest, "wb") as out:
                     while True:
                         chunk = r.read(64 * 1024)
@@ -137,13 +130,11 @@ class Http:
                             break
                         out.write(chunk)
                 result.complete(dest)
-            except Exception as exc:                
+            except Exception as exc:
                 result.fail(str(exc))
 
         self._submit(_work)
         return result
-
-                                                                           
 
     def request(self, method: str, url: str, *, params: Optional[dict] = None,
                 json_body: Any = None, data: Any = None,
@@ -195,12 +186,12 @@ class Http:
                         body = exc.read().decode("utf-8", errors="replace")
                     except Exception:
                         pass
-                                                                             
+
                     result.complete(HttpResponse(
                         exc.code, body, dict(exc.headers or {}), full_url,
                         time.monotonic() - started))
                     return
-                except Exception as exc:                                      
+                except Exception as exc:
                     last_error = str(exc)
                     if attempt + 1 < attempts:
                         time.sleep(retry_delay * (2 ** attempt))

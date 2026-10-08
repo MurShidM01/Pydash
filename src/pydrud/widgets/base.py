@@ -12,7 +12,8 @@ import json
 import uuid
 from typing import Any, Callable, Optional
 
-                                         
+from pydrud.core.errors import MaxDepthError
+
 EVENT_NAMES = (
     "click",
     "long_press",
@@ -22,6 +23,17 @@ EVENT_NAMES = (
     "scroll",
 )
 
+MAX_TREE_DEPTH = 1000
+
+def _serialise_value(value):
+    """Convert style helpers and nested values into JSON-safe primitives."""
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return _serialise_value(value.to_dict())
+    if isinstance(value, dict):
+        return {key: _serialise_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_serialise_value(item) for item in value]
+    return value
 
 class Widget:
     """Base class for all Pydrud widgets.
@@ -42,7 +54,6 @@ class Widget:
     UI has to be re-created on every ``page.update()``.
     """
 
-                                                                            
     _widget_type: str = "Widget"
 
     def __init__(
@@ -53,27 +64,38 @@ class Widget:
         expand: Optional[int] = None,
         visible: bool = True,
         tooltip: Optional[str] = None,
+        semantics: Optional[str] = None,
         on_click: Optional[Callable] = None,
         on_long_press: Optional[Callable] = None,
+        class_: Optional[list[str]] = None,
         **kwargs,
     ):
-                                                                               
+
         self._auto_key: bool = key is None
-                                                        
+
         self.key: str = key or _gen_key()
-                                                                     
+
         self.style: dict = dict(style) if style else {}
-                                                       
+
+        if isinstance(class_, str):
+            self.class_ = [name for name in class_.split() if name]
+        else:
+            self.class_ = list(class_) if class_ else []
+        if any(not isinstance(name, str) for name in self.class_):
+            raise TypeError("class_ entries must be strings")
+
+        self._resolved_style: dict = {}
+
         self.expand: Optional[int] = expand
-                                         
+
         self.visible: bool = visible
-                                                         
+
         self.tooltip: Optional[str] = tooltip
-                                                                      
+
+        self.semantics: Optional[str] = semantics
+
         self.children: list["Widget"] = []
-                                                                        
-                                                                          
-                                                                   
+
         if "children" in kwargs:
             supplied = kwargs.pop("children") or []
             if isinstance(supplied, Widget):
@@ -84,12 +106,9 @@ class Widget:
                         f"children= expects Widget instances, "
                         f"got {type(child).__name__}")
             self.children = list(supplied)
-                                                                        
+
         self.event_handlers: dict[str, Callable] = {}
-                                                                         
-                                                                            
-                                                                             
-                                                                         
+
         for name in [k for k in kwargs if k.startswith("on_")]:
             handler = kwargs.pop(name)
             if handler is None:
@@ -99,15 +118,12 @@ class Widget:
                     f"{name}= must be callable, got {type(handler).__name__}")
             self.event_handlers[name[3:]] = handler
 
-                                                           
         self._extra: dict = kwargs
 
         if on_click is not None:
             self.event_handlers["click"] = on_click
         if on_long_press is not None:
             self.event_handlers["long_press"] = on_long_press
-
-                                                                           
 
     def on_click(self, callback: Callable) -> "Widget":
         """Register a click/tap handler. Returns self for chaining."""
@@ -139,60 +155,110 @@ class Widget:
         self.event_handlers[event] = callback
         return self
 
-                                                                           
-
     def with_style(self, **props) -> "Widget":
-        """Merge extra style properties into this widget (chainable)."""
+        """Merge extra inline style properties into this widget (chainable)."""
         self.style.update(props)
         return self
 
-                                                                           
+    def _effective_style(self) -> dict:
+        """Return PSS declarations overlaid by inline widget styles.
+
+        The PSS result is kept separately from ``style`` so an edited sheet
+        can remove a declaration cleanly and inline values always win.
+        """
+        return {**self._resolved_style, **self.style}
+
+    def _serialise_style(self):
+        """Return the effective style without Python-only class markers."""
+        style = {
+            key: value
+            for key, value in self._effective_style().items()
+            if not (isinstance(key, str) and key.startswith("class_"))
+        }
+        return _serialise_value(style)
 
     def to_dict(self) -> dict:
         """Recursively serialise this widget and its children to a JSON-safe dict."""
-        validate_tree_keys(self)
-        d: dict[str, Any] = {
-            "type": self._widget_type,
-            "key": self.key,
-            "style": self.style,
-            "expand": self.expand,
-            "visible": self.visible,
-            "tooltip": self.tooltip,
-            "has_events": bool(self.event_handlers),
-            "events": sorted(self.event_handlers.keys()),
-            "props": self._serialise_props(),
-        }
-        if self.children:
-                                                                         
-                                                                        
-                                                                  
-                                                                 
-            d["children"] = [c.to_dict() for c in self.children]
-        return d
+        root = self.unwrap()
+        _merge_unwrapped_style(self, root)
+        validate_tree_keys(root)
+        return _serialise_tree(root)
 
     def _serialise_props(self) -> dict:
         """Override in subclasses to add widget-specific properties."""
         return dict(self._extra)
 
+    def _freeze_props(self) -> dict:
+        """Snapshot this widget's serialised props for the current build.
+
+        The diff engine compares these frozen values (PB-004). Widgets whose
+        serialisation is *dynamic* — a ``Canvas`` re-runs its ``on_draw``
+        painter — would otherwise be re-serialised against the live state at
+        diff time, so the old and new trees would look identical and the diff
+        would emit zero patches (a silent freeze).
+        """
+        frozen = self._serialise_props()
+        self.__dict__["_props_cache"] = frozen
+        return frozen
+
+    def _current_props(self) -> dict:
+        """The props frozen for this build, or a fresh snapshot if unfrozen."""
+        cached = self.__dict__.get("_props_cache")
+        if cached is None:
+            return self._freeze_props()
+        return cached
+
+    def _serialise_self(self) -> dict:
+        """This node's own serialised fields (``children`` left empty).
+
+        The iterative :func:`_serialise_tree` fills ``children`` afterwards.
+        Override this — not :meth:`to_dict` — when a widget renders as a
+        different native node (``FloatingActionButton`` serialises as a
+        ``Container``), so the tree stays depth-safe.
+
+        ``on_draw``-style painters still run on every serialisation (that is
+        the documented contract), and the result becomes the build's frozen
+        props so the diff compares like with like.
+        """
+        props = self._serialise_props()
+        self.__dict__["_props_cache"] = props
+        return {
+            "type": self._widget_type,
+            "key": self.key,
+            "style": self._serialise_style(),
+            "expand": self.expand,
+            "visible": self.visible,
+            "tooltip": self.tooltip,
+            "semantics": self.semantics,
+            "has_events": bool(self.event_handlers),
+            "events": sorted(self.event_handlers.keys()),
+            "props": _serialise_value(props),
+            "children": [],
+        }
+
     def to_json(self) -> str:
         """JSON string representation of the widget tree."""
         return json.dumps(self.to_dict(), indent=2, default=str)
 
-                                                                           
-
     def find_by_key(self, key: str) -> Optional["Widget"]:
         """Walk the tree and return the first widget matching *key*."""
-        if self.key == key:
-            return self
-        for child in self.children:
-            result = child.find_by_key(key)
-            if result is not None:
-                return result
+        stack: list["Widget"] = [self]
+        while stack:
+            widget = stack.pop()
+            if widget.key == key:
+                return widget
+
+            stack.extend(reversed(widget.children))
         return None
 
     def walk(self):
         """Depth-first generator yielding (widget, depth) tuples."""
-        yield from _walk(self, 0)
+        stack: list[tuple["Widget", int]] = [(self, 0)]
+        while stack:
+            widget, depth = stack.pop()
+            yield widget, depth
+            for child in reversed(widget.children):
+                stack.append((child, depth + 1))
 
     def unwrap(self) -> "Widget":
         """Return the widget that is actually serialised.
@@ -204,6 +270,20 @@ class Widget:
         """
         return self
 
+    def render_type(self) -> str:
+        """The native widget type this node serialises to on the wire.
+
+        Composite widgets render as an internal layout node
+        (``Scaffold`` → ``Stack``, ``AppBar`` → its built node), and a few
+        widgets serialise under a different type than their Python class
+        (``FloatingActionButton`` → ``Container``). Capability checks must
+        compare the type the renderer actually receives — not
+        ``_widget_type`` — or a supported composite is mistaken for an
+        unsupported one and swapped for a placeholder.
+        """
+        node = self.unwrap()
+        return self._widget_type if node is self else node.render_type()
+
     def clone(self) -> "Widget":
         """Deep-copy this widget subtree.
 
@@ -211,23 +291,95 @@ class Widget:
         especially bound methods and closures over sockets — are not always
         copyable.  The clone is only used for diffing, where handler identity
         does not matter.
+
+        The copy is *iterative*: ``copy.deepcopy`` recursed once per tree
+        level and blew the C stack around depth 200, which meant a moderately
+        deep tree wedged rendering on every frame (2.0.2, PB-001). Only each
+        node's own (shallow) attributes are deep-copied here; children are
+        linked with an explicit stack.
         """
         memo: dict[int, Any] = {}
-        handlers: list[tuple[Widget, dict]] = []
-        for w, _ in self.walk():
-            handlers.append((w, w.event_handlers))
-            memo[id(w.event_handlers)] = dict(w.event_handlers)
-        return copy.deepcopy(self, memo)
+        root = self._copy_node(memo)
+        stack: list[tuple["Widget", "Widget"]] = [(self, root)]
+        while stack:
+            source, target = stack.pop()
+            for child in source.children:
+                child_clone = child._copy_node(memo)
+                target.children.append(child_clone)
+                stack.append((child, child_clone))
+        return root
+
+    def _copy_node(self, memo: dict) -> "Widget":
+        """Shallow-copy one widget, deep-copying its non-child attributes."""
+        clone = object.__new__(type(self))
+        for name, value in self.__dict__.items():
+            if name == "children":
+                clone.children = []
+            elif name == "event_handlers":
+
+                clone.event_handlers = dict(value)
+            else:
+                clone.__dict__[name] = copy.deepcopy(value, memo)
+        return clone
 
     def __repr__(self) -> str:
         return f"{self._widget_type}(key={self.key!r})"
 
+def _merge_unwrapped_style(source: "Widget", rendered: "Widget") -> None:
+    """Carry a composite widget's effective style to its rendered root.
 
-def _walk(widget: "Widget", depth: int):
-    yield widget, depth
-    for child in widget.children:
-        yield from _walk(child, depth + 1)
+    Composite wrappers may rebuild their implementation node inside
+    ``unwrap()``. Applying the wrapper's resolved/inline styles here keeps PSS
+    behavior intact without adding wrapper metadata to the wire tree.
+    """
+    if rendered is source:
+        return
+    inherited = {
+        key: value
+        for key, value in source._effective_style().items()
+        if not (isinstance(key, str) and key.startswith("class_"))
+    }
+    if inherited:
+        rendered.style = {**rendered.style, **inherited}
 
+def _serialise_tree(root: "Widget") -> dict:
+    """Serialise a widget tree without recursion (PB-001).
+
+    Composite widgets (``AppBar``, ``Scaffold``, ``Visible`` …) render as an
+    internal node; :meth:`Widget.unwrap` is resolved once per node and cached
+    so a builder with side effects runs exactly once, and each node's own
+    fields come from :meth:`Widget._serialise_self`. A pre-order pass
+    collects the rendered nodes; the reversed pass builds each dict once its
+    children already have one, giving the same output as the recursive
+    ``to_dict`` with O(n) stack.
+
+    *root* must already be unwrapped (``to_dict`` does that).
+    """
+    children_of: dict[int, list["Widget"]] = {}
+    order: list[Widget] = []
+    stack: list[Widget] = [root]
+    while stack:
+        widget = stack.pop()
+        order.append(widget)
+        kids: list[Widget] = []
+        for child in widget.children:
+            rendered = child.unwrap()
+            _merge_unwrapped_style(child, rendered)
+            kids.append(rendered)
+            stack.append(rendered)
+        children_of[id(widget)] = kids
+
+    serialised: dict[int, dict] = {}
+    for widget in reversed(order):
+        d = widget._serialise_self()
+        kids = children_of[id(widget)]
+        if kids:
+
+            d["children"] = [serialised[id(c)] for c in kids]
+        else:
+            d.pop("children", None)
+        serialised[id(widget)] = d
+    return serialised[id(root)]
 
 def assign_stable_keys(root: "Widget", prefix: str = "r") -> "Widget":
     """Rewrite auto-generated keys into deterministic, structural keys.
@@ -239,30 +391,42 @@ def assign_stable_keys(root: "Widget", prefix: str = "r") -> "Widget":
     """
     if root._auto_key:
         root.key = prefix
-    _stabilise_children(root)
+    stack: list[Widget] = [root]
+    while stack:
+        widget = stack.pop()
+        for index, child in enumerate(widget.children):
+            if child._auto_key:
+                child.key = f"{widget.key}.{index}{child._widget_type}"
+            stack.append(child)
     return root
-
-
-def _stabilise_children(widget: "Widget") -> None:
-    for index, child in enumerate(widget.children):
-        if child._auto_key:
-            child.key = f"{widget.key}.{index}{child._widget_type}"
-        _stabilise_children(child)
-
 
 def _gen_key() -> str:
     return uuid.uuid4().hex[:12]
-
 
 def validate_tree_keys(root: "Widget") -> None:
     """Validate that every widget key is unique and non-empty.
 
     Duplicate keys make keyed reconciliation mathematically ambiguous and can
     otherwise collapse entries in the diff engine's dictionaries.
+
+    Iterative (PB-001): the old recursive walk raised ``RecursionError`` on a
+    deep tree; now an over-deep tree raises :class:`MaxDepthError` with the
+    offending widget named, and duplicate keys are still reported with both
+    paths (in the same left-to-right order as before).
     """
     seen: dict[str, tuple[str, ...]] = {}
-
-    def visit(widget: "Widget", path: tuple[str, ...]) -> None:
+    stack: list[tuple["Widget", tuple[str, ...], int]] = [
+        (root, (root._widget_type,), 0)
+    ]
+    while stack:
+        widget, path, depth = stack.pop()
+        if depth > MAX_TREE_DEPTH:
+            raise MaxDepthError(
+                f"Pydrud widget tree exceeds the maximum depth of "
+                f"{MAX_TREE_DEPTH} at {widget._widget_type}"
+                f"(key={widget.key!r}). Flatten the tree, or raise "
+                "pydrud.widgets.base.MAX_TREE_DEPTH if the device can take it."
+            )
         key = str(widget.key or "")
         if not key:
             raise ValueError("Pydrud widget keys must be non-empty")
@@ -274,7 +438,8 @@ def validate_tree_keys(root: "Widget") -> None:
                 f"{previous} and {current}"
             )
         seen[key] = path
-        for index, child in enumerate(widget.children):
-            visit(child, path + (f"{widget._widget_type}[{index}]",))
 
-    visit(root, (root._widget_type,))
+        for index in range(len(widget.children) - 1, -1, -1):
+            child = widget.children[index]
+            stack.append((child, path + (f"{widget._widget_type}[{index}]",),
+                          depth + 1))

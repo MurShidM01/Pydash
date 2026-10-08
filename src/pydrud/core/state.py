@@ -13,6 +13,35 @@ from pydrud.core.subscriptions import Subscription
 
 T = TypeVar("T")
 
+UNSET: Any = object()
+
+def read_reactive(value: Any, *, default: Any = None, _depth: int = 0) -> Any:
+    """Read a plain value, a reactive container or a zero-arg callable.
+
+    Conditional widgets accept whatever the app has to hand — a bool, a
+    :class:`State`, a ``Computed``, a ``Selector``, a ``ReactiveList`` or
+    a lambda — so the rules live here once. Resolution repeats to a small
+    depth, so a callable may return a reactive container.
+    """
+    if value is UNSET:
+        return default
+    if _depth >= 5:
+        return value
+    if callable(value) and not hasattr(value, "to_dict"):
+        try:
+            resolved = value()
+        except TypeError:
+            return value
+        return read_reactive(resolved, default=default, _depth=_depth + 1)
+    if hasattr(type(value), "value") and not isinstance(
+            value, (str, bytes, int, float, bool)):
+        return read_reactive(value.value, default=default, _depth=_depth + 1)
+    return value
+
+def is_truthy(value: Any, *, default: bool = True) -> bool:
+    """``read_reactive`` plus a ``bool()``, with an empty-value default."""
+    resolved = read_reactive(value, default=default)
+    return bool(default if resolved is UNSET else resolved)
 
 class State(Generic[T]):
     """A reactive value container.
@@ -27,9 +56,7 @@ class State(Generic[T]):
         self._value: T = initial
         self._watchers: list[tuple[Callable[[T, T], None], Optional[Callable]]] = []
         self.distinct = bool(distinct)
-                                                                           
-                                                                           
-                                               
+
         self.name: str = name
 
     @property
@@ -74,7 +101,6 @@ class State(Generic[T]):
             return f"State({self._value!r}, name={self.name!r})"
         return f"State({self._value!r})"
 
-
 class ReactiveDict:
     """A dict whose ``changed`` State toggles whenever keys are set.
 
@@ -87,7 +113,7 @@ class ReactiveDict:
 
     def __init__(self, initial: dict[str, Any] | None = None):
         self._data: dict[str, Any] = {}
-        self.changed = State(0)                     
+        self.changed = State(0)
         if initial:
             for k, v in initial.items():
                 self._data[k] = v

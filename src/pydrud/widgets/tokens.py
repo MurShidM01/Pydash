@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-
 class Tokens:
     """Mutable design constants shared by the Python widgets and Android.
 
@@ -32,17 +31,15 @@ class Tokens:
     through :meth:`Theme.configure`, which validates names.
     """
 
-                                                                           
     radius_button: float = 14
     radius_card: float = 16
     radius_input: float = 14
-    radius_chip: float = 999                
+    radius_chip: float = 999
     radius_sheet: float = 24
     radius_dialog: float = 24
     radius_fab: float = 28
     radius_image: float = 12
 
-                                                                           
     app_bar_height: float = 56
     nav_height: float = 64
     rail_width: float = 80
@@ -59,13 +56,11 @@ class Tokens:
     list_tile_height: float = 56
     list_tile_height_two_line: float = 72
 
-                                                                           
-    gutter: float = 20                                   
-    section: float = 24                                     
+    gutter: float = 20
+    section: float = 24
     card_padding: float = 16
-    content_max_width: float = 0                         
+    content_max_width: float = 0
 
-                                                                           
     elevation_card: float = 0
     elevation_button: float = 1.5
     elevation_fab: float = 6
@@ -73,7 +68,12 @@ class Tokens:
     elevation_sheet: float = 12
     elevation_dialog: float = 16
 
-                                                                           
+    shadow_color: str = ""
+    shadow_offset_x: float = 0
+    shadow_offset_y: float = 2
+    shadow_blur: float = 8
+    shadow_spread: float = 0
+
     duration_fast: int = 140
     duration_normal: int = 220
     duration_slow: int = 320
@@ -84,8 +84,7 @@ class Tokens:
     state_disabled: float = 0.38
     animate_layout: bool = True
 
-                                                                           
-    font_family: str = ""                                             
+    font_family: str = ""
     font_scale: float = 1.0
     text_display: float = 34
     text_headline: float = 24
@@ -100,14 +99,10 @@ class Tokens:
     letter_spacing: float = 0.0
     line_height: float = 1.32
 
-                                                                           
-    haptics: bool = True                                                 
-    overscroll_glow: bool = False                                     
+    haptics: bool = True
+    overscroll_glow: bool = False
 
-                                                         
     _DEFAULTS: Dict[str, Any] = {}
-
-                                                                           
 
     @classmethod
     def names(cls) -> tuple:
@@ -159,12 +154,10 @@ class Tokens:
             "lg": cls.button_height_lg,
         }.get(size, cls.button_height_md)
 
-
 Tokens._DEFAULTS = {
     name: value for name, value in vars(Tokens).items()
     if not name.startswith("_") and isinstance(value, (int, float, str, bool))
 }
-
 
 def _closest(name: str, options) -> str:
     """Cheap suggestion for a mistyped token name."""
@@ -172,6 +165,5 @@ def _closest(name: str, options) -> str:
 
     matches = difflib.get_close_matches(name, list(options), n=1, cutoff=0.6)
     return matches[0] if matches else ""
-
 
 __all__ = ["Tokens"]

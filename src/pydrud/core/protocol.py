@@ -13,11 +13,9 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
-
 PROTOCOL_VERSION = 2
 MAX_FRAME_BYTES = 2 * 1024 * 1024
 DEFAULT_RENDER_TIMEOUT = 5.0
-
 
 class ProtocolError(ValueError):
     """A structured protocol violation.
@@ -26,13 +24,12 @@ class ProtocolError(ValueError):
     which exposed JSON parsing failures as value errors.
     """
 
-
 @dataclass(frozen=True, slots=True)
 class RenderTransaction:
     tx_id: str
     revision: int
     base_revision: int
-    kind: str                    
+    kind: str
     payload: dict[str, Any]
     created_at: float
 
@@ -66,7 +63,6 @@ class RenderTransaction:
         result.update(self.payload)
         return result
 
-
 def encode_envelope(message: dict[str, Any]) -> str:
     """Encode and enforce a hard frame limit."""
     if not isinstance(message, dict):
@@ -78,7 +74,6 @@ def encode_envelope(message: dict[str, Any]) -> str:
             f"protocol frame is {len(encoded)} bytes; maximum is {MAX_FRAME_BYTES}"
         )
     return encoded.decode("utf-8")
-
 
 def decode_envelope(line: str) -> Optional[dict[str, Any]]:
     if not isinstance(line, str):
