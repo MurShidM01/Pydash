@@ -11,6 +11,13 @@
 -keep class org.jetbrains.annotations.** { *; }
 -dontwarn com.chaquo.python.**
 
+# ── Pydrud runtime backend ───────────────────────────────────────────────
+# PydrudRuntimeFactory constructs the active backend by name, so R8 must not
+# strip it or the interface it implements.
+-keep class com.pydrud.pydash.PydrudRuntimeFactory { *; }
+-keep class com.pydrud.pydash.PythonRuntime { *; }
+-keep class com.pydrud.pydash.ChaquopyRuntime { *; }
+
 # Python calls into these by name through reflection, so they must keep
 # their exact names even when everything else is renamed.
 -keep class com.pydrud.pydash.PydashActivity { *; }

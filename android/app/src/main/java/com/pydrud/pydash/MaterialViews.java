@@ -42,16 +42,21 @@ public class MaterialViews {
 
     private static final String TAG = "PydrudMaterial";
 
-    private final PydashActivity activity;
-    private final ViewFactory factory;
+    final PydashActivity activity;
+    final ViewFactory factory;
+    final MaterialNavigationViews nav;
     private EventDispatcher events;
 
     public MaterialViews(PydashActivity activity, ViewFactory factory) {
         this.activity = activity;
         this.factory = factory;
+        this.nav = new MaterialNavigationViews(activity, factory, this);
     }
 
-    public void setEventDispatcher(EventDispatcher d) { this.events = d; }
+    public void setEventDispatcher(EventDispatcher d) {
+        this.events = d;
+        nav.setEventDispatcher(d);
+    }
 
     /** @return true when this class knows how to render {@code type}. */
     public boolean handles(String type) {
@@ -77,6 +82,7 @@ public class MaterialViews {
             case "WebView":
             case "VideoPlayer":
             case "Chart":
+            case "PopupMenu":
             case "Form":
             case "FormField":
             case "GestureDetector":
@@ -92,6 +98,8 @@ public class MaterialViews {
             case "FadeIn":
             case "SlideIn":
             case "ScaleIn":
+            case "AlertDialog":
+            case "ModalBottomSheet":
                 return true;
             default:
                 return false;
@@ -115,15 +123,19 @@ public class MaterialViews {
                 case "Rating":              return createRating(key, props);
                 case "CircularProgress":    return createCircularProgress(props);
                 case "Skeleton":            return createSkeleton(props);
-                case "Tabs":                return createTabs(key, props);
-                case "BottomNavigationBar": return createBottomNav(key, props);
-                case "NavigationRail":      return createRail(key, props);
-                case "SegmentedButton":     return createSegmented(key, props);
-                case "Stepper":             return createStepper(props);
-                case "RefreshIndicator":    return createRefresh(key, props);
+                case "Tabs":             return nav.createTabs(key, props);
+                case "BottomNavigationBar": return nav.createBottomNav(key, props);
+                case "NavigationRail": return nav.createRail(key, props);
+                case "SegmentedButton": return nav.createSegmented(key, props);
+                case "Stepper": return nav.createStepper(props);
+                case "RefreshIndicator": return nav.createRefresh(key, props);
                 case "WebView":             return createWebView(key, props);
                 case "VideoPlayer":         return createVideo(key, props);
                 case "Chart":               return new ChartView(activity, props);
+                case "PopupMenu":           return createPopupMenu(key, props);
+                case "AnimatedSwitcher":    return createAnimatedSwitcher(key, props);
+                case "AlertDialog":
+                case "ModalBottomSheet":    return createOverlay(key, props, type);
                 default:
                     // Transparent wrappers: Drawer, Tooltip, gestures,
                     // animations and form containers are plain hosts whose
@@ -296,6 +308,19 @@ public class MaterialViews {
         chip.setChipCornerRadius(dp(12));
         chip.setCloseIconTint(
             android.content.res.ColorStateList.valueOf(PydrudTheme.onSurfaceVariant));
+
+        // Leading icon (declared in Python as Chip(icon=...)).
+        String chipIcon = p.optString("icon", "");
+        if (!chipIcon.isEmpty()) {
+            chip.setChipIcon(factory.icon(chipIcon, PydrudTheme.onSurfaceVariant, dp(18)));
+            chip.setChipIconVisible(true);
+            chip.setChipIconTint(new android.content.res.ColorStateList(
+                new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}},
+                new int[]{PydrudTheme.dark ? PydrudTheme.lighten(accent, 0.35f)
+                                           : PydrudTheme.darken(accent, 0.25f),
+                          PydrudTheme.onSurfaceVariant}));
+        }
+
         chip.setOnCheckedChangeListener(
             new android.widget.CompoundButton.OnCheckedChangeListener() {
                 @Override public void onCheckedChanged(
@@ -621,41 +646,6 @@ public class MaterialViews {
 
     // ── navigation ───────────────────────────────────────────────────────
 
-    private View createTabs(final String key, JSONObject p) {
-        LinearLayout host = new LinearLayout(activity);
-        host.setOrientation(LinearLayout.VERTICAL);
-
-        final PydrudNavigation.PydrudTabBar bar =
-            new PydrudNavigation.PydrudTabBar(activity);
-        bar.setLayoutParams(new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            PydrudTheme.dp((float) p.optDouble("tabHeight", 48))));
-        bar.applyProps(p);
-        bar.setOnSelect(new PydrudNavigation.PydrudTabBar.OnSelect() {
-            @Override public void onSelect(int index) {
-                if (events == null) return;
-                JSONObject data = new JSONObject();
-                try { data.put("value", index); } catch (Exception ignored) {}
-                events.dispatch("change", key, data);
-            }
-        });
-        host.addView(bar);
-
-        // The selected tab's body lives *below* the strip. Tagging it marks
-        // it as the child host, so both the first render and later patches
-        // put the tab content in the right place (it used to land above the
-        // tab bar — or nowhere at all on the very first frame). The tag key
-        // must be an application-specific id — android.R.id.content throws
-        // "The key must be an application-specific resource id" and used to
-        // replace every Tabs with an empty box.
-        LinearLayout content = new LinearLayout(activity);
-        content.setOrientation(LinearLayout.VERTICAL);
-        host.addView(content, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT));
-        host.setTag(R.id.pydrud_tag_children, content);
-        return host;
-    }
 
     /**
      * Bottom navigation.
@@ -664,220 +654,11 @@ public class MaterialViews {
      * every property from Python is honoured. Pass {@code native=True} on the
      * widget to get the stock Material {@code BottomNavigationView} instead.
      */
-    private View createBottomNav(final String key, JSONObject p) {
-        if (!p.optBoolean("native", false)) {
-            final PydrudNavigation.PydrudNavBar nav =
-                new PydrudNavigation.PydrudNavBar(activity);
-            nav.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                PydrudTheme.dp((float) p.optDouble("height", PydrudTheme.navHeight))));
-            nav.applyProps(p);
-            nav.setOnSelect(new PydrudNavigation.PydrudNavBar.OnSelect() {
-                @Override public void onSelect(int index) {
-                    if (events == null) return;
-                    JSONObject data = new JSONObject();
-                    try { data.put("value", index); } catch (Exception ignored) {}
-                    events.dispatch("change", key, data);
-                }
-            });
-            return nav;
-        }
-        return createNativeBottomNav(key, p);
-    }
 
-    private View createNativeBottomNav(final String key, JSONObject p) {
-        BottomNavigationView nav = new BottomNavigationView(activity);
-        JSONArray items = p.optJSONArray("items");
-        int count = items == null ? 0 : items.length();
-        for (int i = 0; i < count; i++) {
-            JSONObject item = items.optJSONObject(i);
-            if (item == null) continue;
-            android.view.MenuItem menuItem =
-                nav.getMenu().add(0, i, i, item.optString("label", ""));
-            String icon = item.optString("icon", "");
-            if (!icon.isEmpty()) {
-                menuItem.setIcon(factory.icon(icon, PydrudTheme.onSurfaceVariant,
-                                              dp(PydrudTheme.iconSize)));
-            }
-            menuItem.setEnabled(item.optBoolean("enabled", true));
-            String badge = item.optString("badge", "");
-            if (!badge.isEmpty()) {
-                com.google.android.material.badge.BadgeDrawable drawable =
-                    nav.getOrCreateBadge(i);
-                try {
-                    drawable.setNumber(Integer.parseInt(badge));
-                } catch (NumberFormatException ignored) {
-                    drawable.setVisible(true);
-                }
-            }
-        }
-        int selected = p.optInt("selected", 0);
-        if (selected >= 0 && selected < count) nav.setSelectedItemId(selected);
-        String behavior = p.optString("labelBehavior",
-            p.optBoolean("showLabels", true) ? "always" : "never");
-        nav.setLabelVisibilityMode(
-            "never".equals(behavior)
-                ? com.google.android.material.navigation.NavigationBarView.LABEL_VISIBILITY_UNLABELED
-            : "selected".equals(behavior)
-                ? com.google.android.material.navigation.NavigationBarView.LABEL_VISIBILITY_SELECTED
-                : com.google.android.material.navigation.NavigationBarView.LABEL_VISIBILITY_LABELED);
-        String bg = p.optString("bg", "");
-        if (!bg.isEmpty()) nav.setBackgroundColor(parseColor(bg));
 
-        nav.setOnItemSelectedListener(
-            new com.google.android.material.navigation.NavigationBarView.OnItemSelectedListener() {
-                @Override public boolean onNavigationItemSelected(android.view.MenuItem item) {
-                    if (events != null) {
-                        JSONObject data = new JSONObject();
-                        try { data.put("value", item.getItemId()); }
-                        catch (Exception ignored) {}
-                        events.dispatch("change", key, data);
-                    }
-                    return true;
-                }
-            });
-        return nav;
-    }
 
-    private View createRail(final String key, JSONObject p) {
-        LinearLayout rail = new LinearLayout(activity);
-        rail.setOrientation(LinearLayout.VERTICAL);
-        rail.setPadding(dp(4), dp(8), dp(4), dp(8));
-        rail.setBackgroundColor(PydrudTheme.background);
 
-        JSONArray items = p.optJSONArray("items");
-        final int selected = p.optInt("selected", 0);
-        int count = items == null ? 0 : items.length();
-        for (int i = 0; i < count; i++) {
-            JSONObject item = items.optJSONObject(i);
-            if (item == null) continue;
-            final int index = i;
-            LinearLayout cell = new LinearLayout(activity);
-            cell.setOrientation(LinearLayout.VERTICAL);
-            cell.setGravity(Gravity.CENTER);
-            cell.setPadding(dp(12), dp(12), dp(12), dp(12));
 
-            ImageView icon = new ImageView(activity);
-            icon.setImageDrawable(factory.icon(item.optString("icon", ""),
-                i == selected ? PydrudTheme.primary : PydrudTheme.onSurfaceVariant,
-                dp(24)));
-            cell.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
-
-            if (p.optBoolean("extended", false)) {
-                TextView label = new TextView(activity);
-                label.setText(item.optString("label", ""));
-                label.setTextSize(11);
-                label.setGravity(Gravity.CENTER);
-                cell.addView(label);
-            }
-            cell.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View v) {
-                    if (events == null) return;
-                    JSONObject data = new JSONObject();
-                    try { data.put("value", index); } catch (Exception ignored) {}
-                    events.dispatch("change", key, data);
-                }
-            });
-            rail.addView(cell);
-        }
-        return rail;
-    }
-
-    private View createSegmented(final String key, JSONObject p) {
-        LinearLayout group = new LinearLayout(activity);
-        group.setOrientation(LinearLayout.HORIZONTAL);
-        JSONArray options = p.optJSONArray("options");
-        int count = options == null ? 0 : options.length();
-        final boolean multi = p.optBoolean("multi", false);
-        for (int i = 0; i < count; i++) {
-            final int index = i;
-            TextView segment = new TextView(activity);
-            segment.setText(options.optString(i, ""));
-            segment.setGravity(Gravity.CENTER);
-            segment.setPadding(dp(16), dp(11), dp(16), dp(11));
-            segment.setMinHeight(PydrudTheme.adaptive(44));
-            boolean isSelected = multi
-                ? containsIndex(p.optJSONArray("selected"), i)
-                : p.optInt("selected", 0) == i;
-            int accent = parseColor(p.optString("color", ""), PydrudTheme.primary);
-            GradientDrawable shape = new GradientDrawable();
-            shape.setColor(isSelected
-                ? PydrudTheme.alpha(accent, PydrudTheme.dark ? 0.30f : 0.16f)
-                : PydrudTheme.surfaceVariant);
-            shape.setStroke(dp(1), isSelected
-                ? PydrudTheme.alpha(accent, 0.5f) : PydrudTheme.outline);
-            shape.setCornerRadii(cornerRadii(i, count));
-            segment.setBackground(PydrudTheme.ripple(
-                shape, PydrudTheme.alpha(accent, 0.14f), dp(20)));
-            PydrudTheme.applyTextDefaults(segment, 14f, isSelected ? 600 : 500,
-                isSelected
-                    ? (PydrudTheme.dark ? PydrudTheme.lighten(accent, 0.4f)
-                                        : PydrudTheme.darken(accent, 0.25f))
-                    : PydrudTheme.onSurfaceVariant);
-            segment.setGravity(Gravity.CENTER);
-            segment.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View v) {
-                    if (events == null) return;
-                    JSONObject data = new JSONObject();
-                    try { data.put("value", index); } catch (Exception ignored) {}
-                    events.dispatch("change", key, data);
-                }
-            });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-            group.addView(segment, lp);
-        }
-        return group;
-    }
-
-    private View createStepper(JSONObject p) {
-        LinearLayout host = new LinearLayout(activity);
-        boolean horizontal = "horizontal".equals(p.optString("orientation", "horizontal"));
-        host.setOrientation(horizontal ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-        host.setGravity(Gravity.CENTER_VERTICAL);
-        host.setPadding(dp(16), dp(12), dp(16), dp(12));
-
-        JSONArray steps = p.optJSONArray("steps");
-        int count = steps == null ? 0 : steps.length();
-        int current = p.optInt("current", 0);
-        for (int i = 0; i < count; i++) {
-            TextView bubble = new TextView(activity);
-            bubble.setText(String.valueOf(i + 1));
-            bubble.setGravity(Gravity.CENTER);
-            bubble.setTextColor(Color.WHITE);
-            GradientDrawable circle = new GradientDrawable();
-            circle.setShape(GradientDrawable.OVAL);
-            circle.setColor(i <= current ? PydrudTheme.primary
-                                         : PydrudTheme.outlineStrong);
-            bubble.setBackground(circle);
-            host.addView(bubble, new LinearLayout.LayoutParams(dp(28), dp(28)));
-
-            if (i < count - 1) {
-                View line = new View(activity);
-                line.setBackgroundColor(i < current ? PydrudTheme.primary
-                                                    : PydrudTheme.outlineStrong);
-                LinearLayout.LayoutParams lp = horizontal
-                    ? new LinearLayout.LayoutParams(0, dp(2), 1f)
-                    : new LinearLayout.LayoutParams(dp(2), dp(24));
-                lp.setMargins(dp(4), 0, dp(4), 0);
-                host.addView(line, lp);
-            }
-        }
-        return host;
-    }
-
-    private View createRefresh(final String key, JSONObject p) {
-        SwipeRefreshLayout layout = new SwipeRefreshLayout(activity);
-        layout.setRefreshing(p.optBoolean("refreshing", false));
-        String color = p.optString("color", "");
-        if (!color.isEmpty()) layout.setColorSchemeColors(parseColor(color));
-        layout.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
-            @Override public void onRefresh() {
-                if (events != null) events.dispatch("refresh", key, null);
-            }
-        });
-        return layout;
-    }
 
     // ── media ────────────────────────────────────────────────────────────
 
@@ -995,9 +776,301 @@ public class MaterialViews {
         ((LinearLayout) view).addView(text);
     }
 
+    // ── menus ────────────────────────────────────────────────────────────
+
+    /**
+     * The trigger a {@link android.widget.PopupMenu} anchors to.
+     *
+     * <p>Returns a host the factory can also attach a caller-supplied trigger
+     * to. Unless the Python side sent one (``customTrigger``), a 48dp
+     * overflow button is built here — an icon button, or a text button when
+     * a label is given. The menu itself is built and shown by
+     * {@code ViewFactory.bindPopupMenu} when the trigger is tapped, so items
+     * added by a later patch are always the ones shown.
+     */
+    private View createPopupMenu(final String key, JSONObject p) {
+        FrameLayout host = new FrameLayout(activity);
+        host.setClipChildren(false);
+        int tint = parseColor(p.optString("color", ""), PydrudTheme.onSurfaceVariant);
+
+        if (!p.optBoolean("customTrigger", false)) {
+            String label = p.optString("label", "");
+            if (!label.isEmpty()) {
+                TextView trigger = new TextView(activity);
+                trigger.setText(label);
+                PydrudTheme.applyTextDefaults(trigger, 14f, 500, tint);
+                trigger.setGravity(Gravity.CENTER);
+                trigger.setPadding(dp(12), dp(10), dp(12), dp(10));
+                host.addView(trigger, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+            } else {
+                ImageView trigger = new ImageView(activity);
+                trigger.setImageDrawable(factory.icon(
+                    p.optString("icon", "more_vert"), tint, PydrudTheme.adaptive(24)));
+                trigger.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                int box = PydrudTheme.touchTarget();
+                host.addView(trigger, new FrameLayout.LayoutParams(
+                    box, box, Gravity.CENTER));
+            }
+        }
+        host.setMinimumWidth(PydrudTheme.touchTarget());
+        host.setMinimumHeight(PydrudTheme.touchTarget());
+        return host;
+    }
+
+    // ── overlays ─────────────────────────────────────────────────────────
+
+    /**
+     * Declarative modal overlays ({@code AlertDialog}, {@code ModalBottomSheet}).
+     *
+     * <p>The widget is a zero-size host: showing it in the tree shows the
+     * native dialog, removing it dismisses the dialog. Buttons dispatch a
+     * {@code click} event on the widget's key carrying the chosen value
+     * (``{"action": "delete"}`` for a dialog, ``{"index": 2}`` for a sheet),
+     * and an outside/back dismissal dispatches {@code dismiss}.
+     */
+    private View createOverlay(final String key, final JSONObject p, final String type) {
+        final FrameLayout host = new FrameLayout(activity);
+        host.setMinimumWidth(0);
+        host.setMinimumHeight(0);
+        host.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            android.app.Dialog dialog;
+            boolean selfClosing;
+
+            @Override public void onViewAttachedToWindow(View v) {
+                if (dialog != null) return;
+                dialog = "ModalBottomSheet".equals(type)
+                    ? buildBottomSheet(key, p)
+                    : buildAlertDialog(key, p);
+                dialog.setOnDismissListener(d -> {
+                    dialog = null;
+                    if (!selfClosing && events != null) {
+                        events.dispatch("dismiss", key, null);
+                    }
+                });
+                dialog.show();
+            }
+
+            @Override public void onViewDetachedFromWindow(View v) {
+                if (dialog == null) return;
+                selfClosing = true;
+                dialog.dismiss();
+                selfClosing = false;
+                dialog = null;
+            }
+        });
+        return host;
+    }
+
+    private android.app.Dialog buildAlertDialog(final String key, JSONObject p) {
+        com.google.android.material.dialog.MaterialAlertDialogBuilder builder =
+            new com.google.android.material.dialog.MaterialAlertDialogBuilder(activity);
+        String title = p.optString("title", "");
+        String message = p.optString("message", "");
+        if (!title.isEmpty()) builder.setTitle(title);
+        if (!message.isEmpty()) builder.setMessage(message);
+        String icon = p.optString("icon", "");
+        if (!icon.isEmpty()) {
+            builder.setIcon(factory.icon(icon, PydrudTheme.primary, dp(24)));
+        }
+        boolean dismissible = p.optBoolean("dismissible", true);
+        builder.setCancelable(dismissible);
+
+        // Actions render left→right in the order Python declared them, so the
+        // last one is the affirmative (right-most) button — matching Flutter's
+        // AlertDialog.actions.
+        JSONArray actions = p.optJSONArray("actions");
+        int n = actions != null ? actions.length() : 0;
+        if (n >= 3) {
+            JSONObject a = actions.optJSONObject(n - 3);
+            builder.setNeutralButton(a != null ? a.optString("label", "") : "",
+                (d, w) -> fireAction(key, a != null ? a.optString("value", "") : ""));
+        }
+        if (n >= 2) {
+            JSONObject a = actions.optJSONObject(n - 2);
+            builder.setNegativeButton(a != null ? a.optString("label", "") : "",
+                (d, w) -> fireAction(key, a != null ? a.optString("value", "") : ""));
+        }
+        if (n >= 1) {
+            JSONObject a = actions.optJSONObject(n - 1);
+            builder.setPositiveButton(a != null ? a.optString("label", "") : "",
+                (d, w) -> fireAction(key, a != null ? a.optString("value", "") : ""));
+        }
+        return builder.create();
+    }
+
+    private android.app.Dialog buildBottomSheet(final String key, JSONObject p) {
+        final com.google.android.material.bottomsheet.BottomSheetDialog dialog =
+            new com.google.android.material.bottomsheet.BottomSheetDialog(activity);
+        boolean dismissible = p.optBoolean("dismissible", true);
+        dialog.setCancelable(dismissible);
+        dialog.setCanceledOnTouchOutside(dismissible);
+
+        LinearLayout column = new LinearLayout(activity);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setBackgroundColor(PydrudTheme.surface);
+        column.setPadding(0, dp(12), 0, dp(12));
+
+        View handle = new View(activity);
+        GradientDrawable handleBg = new GradientDrawable();
+        handleBg.setColor(PydrudTheme.onSurfaceVariant);
+        handleBg.setCornerRadius(dp(2));
+        handle.setBackground(handleBg);
+        LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(dp(32), dp(4));
+        hlp.gravity = Gravity.CENTER_HORIZONTAL;
+        hlp.bottomMargin = dp(8);
+        column.addView(handle, hlp);
+
+        String title = p.optString("title", "");
+        if (!title.isEmpty()) {
+            TextView heading = new TextView(activity);
+            heading.setText(title);
+            PydrudTheme.applyTextDefaults(heading, 16f, 600, PydrudTheme.onSurface);
+            heading.setPadding(dp(20), dp(8), dp(20), dp(12));
+            column.addView(heading);
+        }
+
+        JSONArray options = p.optJSONArray("options");
+        JSONArray icons = p.optJSONArray("icons");
+        for (int i = 0; options != null && i < options.length(); i++) {
+            final String label = options.optString(i, "");
+            final int index = i;
+            String icon = icons != null ? icons.optString(i, "") : "";
+
+            LinearLayout row = new LinearLayout(activity);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(20), dp(14), dp(20), dp(14));
+            row.setBackground(PydrudTheme.ripple(
+                PydrudTheme.shape(Color.TRANSPARENT, 0),
+                PydrudTheme.alpha(PydrudTheme.primary, PydrudTheme.rippleOpacity), 0));
+            if (!icon.isEmpty()) {
+                ImageView iv = new ImageView(activity);
+                iv.setImageDrawable(factory.icon(
+                    icon, PydrudTheme.onSurfaceVariant, dp(22)));
+                LinearLayout.LayoutParams ilp =
+                    new LinearLayout.LayoutParams(dp(22), dp(22));
+                ilp.rightMargin = dp(16);
+                row.addView(iv, ilp);
+            }
+            TextView text = new TextView(activity);
+            text.setText(label);
+            PydrudTheme.applyTextDefaults(text, 15f, 500, PydrudTheme.onSurface);
+            row.addView(text, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+            row.setOnClickListener(v -> {
+                fireSheetAction(key, index, label);
+                dialog.dismiss();
+            });
+            column.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+
+        android.widget.ScrollView scroll = new android.widget.ScrollView(activity);
+        scroll.addView(column);
+        dialog.setContentView(scroll);
+        return dialog;
+    }
+
+    private void fireAction(String key, String value) {
+        if (events == null) return;
+        JSONObject data = new JSONObject();
+        try { data.put("action", value); } catch (Exception ignored) { }
+        events.dispatch("click", key, data);
+    }
+
+    private void fireSheetAction(String key, int index, String label) {
+        if (events == null) return;
+        JSONObject data = new JSONObject();
+        try {
+            data.put("index", index);
+            data.put("label", label);
+        } catch (Exception ignored) { }
+        events.dispatch("click", key, data);
+    }
+
+    // ── AnimatedSwitcher ─────────────────────────────────────────────────
+
+    /**
+     * A cross-fading container. When its child is replaced, the outgoing
+     * view fades out (and is removed once invisible) while the incoming view
+     * fades in, so "loading → content" swaps read as a transition rather
+     * than a flicker.
+     */
+    private View createAnimatedSwitcher(String key, JSONObject p) {
+        return new SwitcherView(activity, p.optString("transition", "fade"),
+                                p.optInt("duration", 250));
+    }
+
+    static class SwitcherView extends FrameLayout {
+        private final String transition;
+        private final int duration;
+
+        SwitcherView(Context context, String transition, int duration) {
+            super(context);
+            this.transition = transition;
+            this.duration = Math.max(60, duration);
+        }
+
+        @Override public void removeView(View view) {
+            if (view == null || view.getParent() != this) {
+                super.removeView(view);
+                return;
+            }
+            // Keep the outgoing view for the length of the fade so the
+            // incoming view can fade over the top of it.
+            view.animate().cancel();
+            view.animate().alpha(0f).setDuration(duration)
+                .withEndAction(() -> {
+                    if (view.getParent() == this) SwitcherView.super.removeView(view);
+                }).start();
+        }
+
+        @Override public void addView(View child, int index, ViewGroup.LayoutParams params) {
+            child.animate().cancel();
+            if (child.getParent() == this) {
+                // A "move" patch removes and re-adds the *same* view: cancel
+                // the pending fade-out and reposition instead of cross-fading.
+                child.setAlpha(1f);
+                resetTransform(child);
+                SwitcherView.super.removeView(child);
+                SwitcherView.super.addView(child, index, params);
+                return;
+            }
+            child.setAlpha(0f);
+            float dx = 0f, dy = 0f, scale = 1f;
+            if ("slide_up".equals(transition))         dy = dpf(24);
+            else if ("slide_down".equals(transition))  dy = -dpf(24);
+            else if ("slide_left".equals(transition))  dx = dpf(24);
+            else if ("slide_right".equals(transition)) dx = -dpf(24);
+            else if ("scale".equals(transition))       scale = 0.9f;
+            child.setTranslationX(dx);
+            child.setTranslationY(dy);
+            child.setScaleX(scale);
+            child.setScaleY(scale);
+            SwitcherView.super.addView(child, index, params);
+            child.animate().alpha(1f).translationX(0f).translationY(0f)
+                .scaleX(1f).scaleY(1f).setDuration(duration).start();
+        }
+
+        private void resetTransform(View child) {
+            child.setTranslationX(0f);
+            child.setTranslationY(0f);
+            child.setScaleX(1f);
+            child.setScaleY(1f);
+        }
+
+        private float dpf(float value) {
+            return value * getResources().getDisplayMetrics().density;
+        }
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────
 
-    private boolean containsIndex(JSONArray array, int index) {
+    boolean containsIndex(JSONArray array, int index) {
         if (array == null) return false;
         for (int i = 0; i < array.length(); i++) {
             if (array.optInt(i, -1) == index) return true;
@@ -1005,7 +1078,7 @@ public class MaterialViews {
         return false;
     }
 
-    private float[] cornerRadii(int index, int count) {
+    float[] cornerRadii(int index, int count) {
         float r = dp(20);
         boolean first = index == 0;
         boolean last = index == count - 1;
@@ -1017,12 +1090,12 @@ public class MaterialViews {
         };
     }
 
-    private int withAlpha(int color, int alpha) {
+    int withAlpha(int color, int alpha) {
         return Color.argb(alpha, Color.red(color), Color.green(color),
                           Color.blue(color));
     }
 
-    private int parseColor(String value) {
+    int parseColor(String value) {
         try {
             return Color.parseColor(value);
         } catch (Exception e) {
@@ -1030,15 +1103,15 @@ public class MaterialViews {
         }
     }
 
-    private int dp(int value) {
+    int dp(int value) {
         return PydrudTheme.dp(value);
     }
 
-    private int dp(float value) {
+    int dp(float value) {
         return PydrudTheme.dp(value);
     }
 
-    private int parseColor(String value, int fallback) {
+    int parseColor(String value, int fallback) {
         return PydrudTheme.parse(value, fallback);
     }
 

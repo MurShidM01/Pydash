@@ -8,17 +8,14 @@ import androidx.work.Data;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
-import com.chaquo.python.PyObject;
-import com.chaquo.python.Python;
-import com.chaquo.python.android.AndroidPlatform;
-
 /**
  * PydrudWorker — runs a Python background job scheduled with
  * {@code page.background.schedule(...)}.
  *
  * WorkManager may start this long after the Activity is gone, so the worker
- * boots its own Python interpreter when needed and calls
- * {@code app.main.run_background_job(name, inputs_json)}.
+ * boots the project's Python backend when needed and calls
+ * {@code app.android_main.run_background_job(name, inputs_json)}.
+ * The backend is chosen at build time (see {@link PydrudRuntimeFactory}).
  */
 public class PydrudWorker extends Worker {
 
@@ -40,15 +37,13 @@ public class PydrudWorker extends Worker {
         }
 
         try {
-            if (!Python.isStarted()) {
-                Python.start(new AndroidPlatform(getApplicationContext()));
-            }
-            PyObject module = Python.getInstance().getModule("app.main");
-            PyObject result = module.callAttr("run_background_job", job,
-                                              inputs == null ? "{}" : inputs);
-            String text = result == null ? "" : result.toString();
+            PythonRuntime runtime = PydrudRuntimeFactory.create();
+            runtime.start(getApplicationContext());
+            String text = runtime.callBackgroundJob(
+                "app.android_main", job,
+                inputs == null ? "{}" : inputs);
             Data output = new Data.Builder()
-                .putString("result", text)
+                .putString("result", text == null ? "" : text)
                 .build();
             return Result.success(output);
         } catch (Exception e) {

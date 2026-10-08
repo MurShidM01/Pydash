@@ -61,6 +61,17 @@ public class BridgeService {
     private volatile String lastMetrics = "";
     private final ExecutorService writeExecutor = Executors.newSingleThreadExecutor();
 
+    /**
+     * The host backend has no on-device interpreter, so the app dials out to
+     * the developer's machine instead of listening on loopback. The protocol
+     * is identical once the socket is up; only who connects changes.
+     */
+    private final boolean clientMode =
+        "host".equals(PydrudRuntimeConfig.BACKEND);
+
+    /** The bridge worker thread, so stop() can interrupt a reconnect wait. */
+    private volatile Thread bridgeThread;
+
     public BridgeService(PydashActivity activity,
                          FrameLayout rootView,
                          ViewFactory viewFactory,
@@ -91,11 +102,17 @@ public class BridgeService {
     public void start() {
         if (running) return;
         running = true;
-        new Thread(this::runServer, "pydrud-bridge").start();
+        Runnable worker = clientMode ? this::runClient : this::runServer;
+        bridgeThread = new Thread(worker, "pydrud-bridge");
+        bridgeThread.start();
     }
 
     /** Block until the server socket is accepting connections (or timeout). */
     public boolean awaitListening(long millis) {
+        if (clientMode) {
+            // Nothing to wait for: the bridge dials out on its own thread.
+            return true;
+        }
         try {
             return listeningLatch.await(millis, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
@@ -111,6 +128,8 @@ public class BridgeService {
 
     public void stop() {
         running = false;
+        Thread worker = bridgeThread;
+        if (worker != null) worker.interrupt();
         closeClient();
         try { if (serverSocket != null) serverSocket.close(); } catch (Exception ignored) {}
         writeExecutor.shutdownNow();
@@ -120,6 +139,57 @@ public class BridgeService {
         try { if (clientSocket != null) clientSocket.close(); } catch (Exception ignored) {}
         clientSocket = null;
         writer = null;
+    }
+
+    // ── Client loop (host backend) ────────────────────────────────────────
+
+    /**
+     * Dial the developer's machine and serve the same protocol as the server
+     * loop. The host backend ships no interpreter, so there is nothing to
+     * boot on-device; the app simply reconnects until the host bridge is up.
+     */
+    private void runClient() {
+        listeningLatch.countDown();
+        long backoff = 250;
+        while (running) {
+            Socket socket = null;
+            try {
+                socket = new Socket();
+                socket.connect(new java.net.InetSocketAddress(
+                    PydrudRuntimeConfig.REMOTE_HOST,
+                    PydrudRuntimeConfig.REMOTE_PORT), 4000);
+                clientSocket = socket;
+                writer = null;
+                backoff = 250;
+                Log.i(TAG, "Connected to host bridge at "
+                           + PydrudRuntimeConfig.REMOTE_HOST + ":"
+                           + PydrudRuntimeConfig.REMOTE_PORT);
+                sendReady();
+                activity.flushDeepLink();
+                serveClient(socket);
+                Log.i(TAG, "Host bridge disconnected");
+            } catch (Exception e) {
+                if (running) {
+                    Log.i(TAG, "Host bridge not reachable ("
+                               + PydrudRuntimeConfig.REMOTE_HOST + ":"
+                               + PydrudRuntimeConfig.REMOTE_PORT
+                               + "); retrying in " + backoff + "ms");
+                }
+            } finally {
+                closeClient();
+                try { if (socket != null) socket.close(); } catch (Exception ignored) {}
+            }
+            if (!running) break;
+            // Reconnect with a bounded backoff so a device that starts before
+            // 'pydrud dev --bridge' still attaches once the host is ready.
+            try {
+                Thread.sleep(backoff);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            backoff = Math.min(backoff * 2, 4000);
+        }
     }
 
     // ── Server loop ───────────────────────────────────────────────────────
@@ -182,7 +252,7 @@ public class BridgeService {
         try {
             JSONObject data = collectMetrics();
             data.put("protocol_version", PROTOCOL_VERSION);
-            data.put("renderer_version", "2.0.2");
+            data.put("renderer_version", "2.1.0");
             JSONObject capabilities = new JSONObject();
             capabilities.put("transactional_render", true);
             capabilities.put("revisioned_render", true);
@@ -190,6 +260,37 @@ public class BridgeService {
             capabilities.put("resync", true);
             capabilities.put("coalescing", true);
             capabilities.put("native_animation_clock", true);
+            capabilities.put("native_view", true);
+            JSONArray services = new JSONArray();
+            String[] optionalServices = {
+                "dialog", "storage", "files", "clipboard", "share",
+                "permissions", "notifications", "location", "device",
+                "haptics", "secure", "background", "push", "shortcuts",
+                "camera", "sensors", "bluetooth", "nfc", "biometrics",
+                "audio", "system_theme"
+            };
+            for (String service : optionalServices) services.put(service);
+            capabilities.put("services", services);
+            JSONArray widgetTypes = new JSONArray();
+            String[] supportedWidgetTypes = {
+                "Container", "Center", "Padding", "SizedBox", "Positioned",
+                "Card", "Stack", "Column", "ListView", "Row", "GridView",
+                "Spacer", "Divider", "Text", "Button", "TextField", "Image",
+                "Icon", "Checkbox", "Switch", "Radio", "ProgressBar", "Slider",
+                "RangeSlider", "PageView", "Dropdown", "Canvas", "RichText",
+                "Markdown", "MapView", "CameraPreview", "ReorderableList",
+                "InfiniteList", "NativeView", "ListTile", "ExpansionTile", "Chip",
+                "Badge", "Avatar", "Banner", "Tooltip", "Tabs", "BottomNavigationBar",
+                "NavigationRail", "Drawer", "SegmentedButton", "SearchBar", "Rating",
+                "CircularProgress", "Skeleton", "RefreshIndicator", "Stepper", "WebView",
+                "VideoPlayer", "Chart", "PopupMenu", "Form", "FormField",
+                "GestureDetector", "InkWell", "Dismissible", "Draggable", "Hero",
+                "AnimatedContainer", "AnimatedOpacity", "AnimatedScale",
+                "AnimatedRotation", "AnimatedSwitcher", "FadeIn", "SlideIn", "ScaleIn",
+                "AlertDialog", "ModalBottomSheet"
+            };
+            for (String widgetType : supportedWidgetTypes) widgetTypes.put(widgetType);
+            capabilities.put("widget_types", widgetTypes);
             data.put("capabilities", capabilities);
             sendEvent("ready", "", data);
         } catch (Exception e) {
@@ -292,7 +393,7 @@ public class BridgeService {
             : uiType == android.content.res.Configuration.UI_MODE_TYPE_DESK ? "desk"
             : uiType == android.content.res.Configuration.UI_MODE_TYPE_CAR ? "car"
             : "normal");
-        data.put("sdk", android.os.Build.VERSION.SDK_INT);
+        data.put("platform_version", String.valueOf(android.os.Build.VERSION.SDK_INT));
         data.put("model", android.os.Build.MODEL);
         return data;
     }
@@ -543,7 +644,13 @@ public class BridgeService {
                 ok = false;
                 sendRenderNack(txId, revision, e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage()));
             }
-            if (ok) sendRenderAck(txId, revision);
+            if (ok) {
+                // A router transition queued before this screen was rebuilt
+                // now animates the *incoming* tree — whether it arrived as a
+                // snapshot or as a patch batch.
+                activity.runPendingRouteTransition();
+                sendRenderAck(txId, revision);
+            }
         });
     }
 
@@ -553,6 +660,7 @@ public class BridgeService {
         activity.runOnUiThread(() -> {
             try {
                 viewFactory.buildTree(tree, rootView);
+                activity.runPendingRouteTransition();
             } catch (Exception e) {
                 Log.e(TAG, "full_render failed", e);
             }
@@ -570,6 +678,7 @@ public class BridgeService {
                     Log.e(TAG, "Patch error", e);
                 }
             }
+            activity.runPendingRouteTransition();
         });
     }
 

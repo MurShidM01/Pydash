@@ -1,0 +1,909 @@
+package com.pydrud.pydash;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.util.Log;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.*;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.json.JSONException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * ViewStyler — collaborator extracted from ViewFactory.
+ *
+ * Holds a back-reference to the owning {@link ViewFactory} and owns one
+ * cohesive slice of the rendering responsibility (styling, layout, events,
+ * image loading, tree patching, native views or built-in widget factories).
+ */
+public class ViewStyler {
+
+    final ViewFactory vf;
+
+    ViewStyler(ViewFactory vf) {
+        this.vf = vf;
+    }
+static final java.util.Set<String> KNOWN_KEYS =
+new java.util.HashSet<>(java.util.Arrays.asList(
+("accent action actions active activeColor activeIcon address align alignment all "
++ "allowNativeBridge allow_credential alpha angle animate animate_layout animation aspectRatio "
++ "audio autoRequestPermission autofocus autoplay axis badge battery_not_low bg bgImage "
++ "blocks blur body boldSelected border borderBottom borderBottomLeftRadius borderBottomRightRadius "
++ "borderLeft borderRadius borderRight "
++ "borderTop borderTopLeftRadius borderTopRightRadius bottom breakpoint buttonSize c1x c1y c2x c2y "
++ "callback_id camera cancel "
++ "cancellable cap channel characteristic charging checkable checked children circular cmd codeBg "
++ "color colors columns content controls count crossAxis crossAxisAlignment current curve "
++ "customTrigger cx cy dark danger dash default deg delay deletable dense density description direction disabled "
++ "dismissible distance divider divisions drawerSide duration dx dy elevation enabled error "
++ "errorColor error_image events every expand expanded extended fabPosition facing family "
++ "feedback filename fill fit floating font font_family format gestures gradient h handled "
++ "haptic haptics has_events height heightFactor helper highAccuracy hint html icon "
++ "iconPosition icon_brightness icons id idle ime importance indeterminate index indicator "
++ "indicatorSize initial initialPage initials inputs interval italic itemIcons items iterations javascript join key keyboard "
++ "keyboard_height keyframes kind label labelBehavior lat leadingColor leadingIcon left letterSpacing "
++ "level lights lineHeight lines link locale lon long loop mainAxis mainAxisAlignment "
++ "margin markers max maxColumns maxHeight maxLabelLines maxLines maxWidth max_seconds "
++ "message mime min minHeight minItemWidth minWidth mode mono multi multiline multiple "
++ "muted name native navigation_bar_color network new_key obscure offsetX offsetY ok on_primary ongoing op "
++ "opacity open ops options ordered orientation overflow overscroll_glow padding "
++ "padding_bottom padding_left padding_right padding_top paint parent_key password path "
++ "pattern peek permission permissions pie pill pitch placeholder position positions press primary_container "
++ "progress prompt property props protocol_version r radius rate ratio readOnly readonly records "
++ "refreshing repeat replace request_id resizeForKeyboard response right ripple role rotate "
++ "rotation route safeArea safeAreaBottom safeAreaTop sample_rate scale scan scanFormats "
++ "scanOverlay scroll scrollable seconds selectable selected semantics sensor service services shadow "
++ "shadow_color shortcuts show showGrid showLabels side size source spacing spans spread src start "
++ "status_bar_color stepSize steps strike strikethrough style subject submenu subtitle surface_variant sweep "
++ "swipeThreshold swipeToRemove sx sy tabHeight tabletColumns tabs text textAlign textColor "
++ "textScale text_scale thickness threeLine threshold timeout title tokens tooltip top "
++ "topDivider topic trailingColor trailingIcon transaction_id transition translateX translateY tristate type "
++ "underline units uppercase url use24h v value values variant vibrate viewClass "
++ "virtualized visible "
++ "volume w weight width widthFactor x x1 x2 y y1 y2 zIndex zoom ").trim().split(" ")));
+static final java.util.Set<String> WARNED_STYLE_KEYS =
+java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
+static final java.util.concurrent.atomic.AtomicBoolean BLUR_WARNED =
+new java.util.concurrent.atomic.AtomicBoolean(false);
+static final java.util.Map<String, android.graphics.Typeface> FONT_CACHE =
+new java.util.HashMap<>();
+
+    void applySemantics(View view, JSONObject node) {
+        if (view == null || node == null) return;
+        if (node.has("semantics") && !node.isNull("semantics")) {
+            String desc = node.optString("semantics", "");
+            view.setContentDescription(desc.isEmpty() ? null : desc);
+        }
+    }
+
+    void styleFab(View view, JSONObject s) {
+        int fill = parseColor(s != null ? s.optString("bg", "") : "", PydrudTheme.primary);
+        float elevation = s != null
+            ? (float) s.optDouble("elevation", PydrudTheme.elevationFab)
+            : PydrudTheme.elevationFab;
+        float radiusDp = s != null && s.has("borderRadius")
+            ? (float) s.optDouble("borderRadius", PydrudTheme.radiusFab)
+            : PydrudTheme.radiusFab;
+        float w = s != null ? (float) s.optDouble("width", 56) : 56f;
+        float h = s != null ? (float) s.optDouble("height", 56) : 56f;
+        float radius = dp(radiusDp);
+        // A FAB is circular only when its radius reaches half the shorter
+        // side (Material 3 squares use a smaller corner radius).
+        boolean circle = radiusDp >= Math.min(w, h) / 2f - 0.5f;
+
+        android.graphics.drawable.Drawable base = PydrudTheme.shape(fill, radius);
+        int ripple = PydrudTheme.rippleOn(fill);
+        view.setBackground(circle
+            ? PydrudTheme.circleRipple(base, ripple)
+            : PydrudTheme.ripple(base, ripple, radius));
+        view.setClipToOutline(true);
+        PydrudTheme.elevate(view, elevation);
+        // A `:active` rule (`transform: scale(.92)`) wins over the default.
+        JSONObject press = s != null ? s.optJSONObject("press") : null;
+        float pressScale = press != null && press.has("scale")
+            ? (float) press.optDouble("scale", PydrudTheme.pressScale)
+            : PydrudTheme.pressScale - 0.04f;
+        PydrudTheme.pressFeedback(view, pressScale, 0f, 4f);
+    }
+
+    void styleCard(View view, JSONObject s) {
+        float radius = s != null && s.has("borderRadius")
+            ? dp(s.optInt("borderRadius", (int) PydrudTheme.radiusCard))
+            : dp(PydrudTheme.radiusCard);
+        int fill = parseColor(s != null ? s.optString("bg", "") : "", PydrudTheme.surface);
+        float elevation = s != null
+            ? (float) s.optDouble("elevation", PydrudTheme.elevationCard)
+            : PydrudTheme.elevationCard;
+
+        if (PydrudTheme.dark) {
+            // Shadows disappear on dark backgrounds; Material lifts the
+            // surface with a tint instead.
+            fill = PydrudTheme.blend(fill, 0xFFFFFFFF, Math.min(0.08f, elevation * 0.018f));
+        }
+        view.setBackground(PydrudTheme.shape(fill, radius,
+            PydrudTheme.dark ? dp(1) : 0,
+            PydrudTheme.dark ? PydrudTheme.outline : Color.TRANSPARENT));
+        view.setClipToOutline(true);
+        PydrudTheme.elevate(view, elevation);
+    }
+
+    void styleInput(EditText et, JSONObject s) {
+        int accent = parseColor(s != null ? s.optString("accent", "") : "",
+                                PydrudTheme.primary);
+        boolean outlined = s != null && "outlined".equals(s.optString("variant", "filled"));
+        float radius = s != null && s.has("borderRadius")
+            ? dp(s.optInt("borderRadius", (int) PydrudTheme.radiusInput))
+            : dp(PydrudTheme.radiusInput);
+
+        int fill = outlined ? PydrudTheme.surface : PydrudTheme.surfaceVariant;
+        int focusFill = outlined ? PydrudTheme.surface
+                                 : PydrudTheme.blend(PydrudTheme.surfaceVariant,
+                                                     PydrudTheme.surface, 0.55f);
+        et.setBackground(PydrudTheme.inputBackground(
+            fill, focusFill, radius,
+            outlined ? PydrudTheme.outlineStrong : PydrudTheme.alpha(PydrudTheme.outline, 0f),
+            accent, dp(1.2f)));
+
+        int padH = PydrudTheme.adaptive(16);
+        int padV = PydrudTheme.adaptive(14);
+        et.setPadding(padH, padV, padH, padV);
+        et.setMinHeight(PydrudTheme.adaptive(PydrudTheme.inputHeight));
+        PydrudTheme.applyTextDefaults(et, 15.5f, 400, PydrudTheme.onSurface);
+        et.setHintTextColor(PydrudTheme.alpha(PydrudTheme.onSurfaceVariant, 0.75f));
+        et.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
+
+        // Leading glyph (TextField(icon="magnify")).
+        String icon = s != null ? s.optString("icon", "") : "";
+        if (!icon.isEmpty()) {
+            et.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                PydrudIcons.drawable(icon, PydrudTheme.onSurfaceVariant,
+                                     PydrudTheme.adaptive(20)), null, null, null);
+            et.setCompoundDrawablePadding(dp(10));
+        }
+
+        // Caret + selection in the app colour (stock blue looks out of place).
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                android.graphics.drawable.GradientDrawable caret =
+                    new android.graphics.drawable.GradientDrawable();
+                caret.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+                caret.setColor(accent);
+                caret.setSize(dp(2), 0);
+                et.setTextCursorDrawable(caret);
+            }
+            et.setHighlightColor(PydrudTheme.alpha(accent, 0.25f));
+        } catch (Throwable ignored) {}
+    }
+
+    void styleToggle(CompoundButton button, JSONObject s) {
+        int accent = parseColor(s != null ? s.optString("activeColor", "") : "",
+                                PydrudTheme.primary);
+        PydrudTheme.applyTextDefaults(button, 15f, 500, PydrudTheme.onSurface);
+        PydrudTheme.tintCompound(button, accent);
+        int minH = PydrudTheme.touchTarget();
+        button.setMinHeight(minH);
+        button.setMinimumHeight(minH);
+        button.setGravity(Gravity.CENTER_VERTICAL);
+        button.setPaddingRelative(dp(8), dp(6), dp(4), dp(6));
+        button.setCompoundDrawablePadding(dp(10));
+        button.setBackground(PydrudTheme.ripple(
+            PydrudTheme.shape(Color.TRANSPARENT, dp(10)),
+            PydrudTheme.alpha(accent, 0.10f), dp(10)));
+    }
+
+    static boolean isReusableType(String type) {
+        switch (type) {
+            case "Canvas":
+            case "MapView":
+            case "CameraPreview":
+            case "ReorderableList":
+            case "InfiniteList":
+            case "RangeSlider":
+            case "NativeView":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    static boolean fillsWidthByDefault(String type) {
+        switch (type) {
+            case "Column": case "Row": case "Card":
+            case "ListView": case "GridView": case "Divider": case "Padding":
+            case "Slider": case "RangeSlider": case "ProgressBar":
+            case "TextField": case "SearchBar": case "ListTile":
+            case "ExpansionTile": case "Tabs": case "BottomNavigationBar":
+            case "SegmentedButton": case "Chart": case "RefreshIndicator":
+            case "Form": case "PageView":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    void applyDefaultSize(View view, JSONObject json) {
+        String type = json.optString("type", "");
+        int w = fillsWidthByDefault(type)
+            ? ViewGroup.LayoutParams.MATCH_PARENT
+            : ViewGroup.LayoutParams.WRAP_CONTENT;
+        int h = ViewGroup.LayoutParams.WRAP_CONTENT;
+        if ("Center".equals(type) || "Stack".equals(type)) {
+            w = ViewGroup.LayoutParams.MATCH_PARENT;
+            h = ViewGroup.LayoutParams.MATCH_PARENT;
+        }
+        if ("Divider".equals(type)) {
+            JSONObject s = json.optJSONObject("style");
+            h = dp(s != null ? s.optInt("thickness", 1) : 1);
+        }
+        view.setLayoutParams(new ViewGroup.MarginLayoutParams(w, h));
+    }
+
+    void applyMargins(ViewGroup.MarginLayoutParams lp, JSONObject json) {
+        JSONObject s = json != null ? json.optJSONObject("style") : null;
+        if (s == null || !s.has("margin")) return;
+        JSONObject m = s.optJSONObject("margin");
+        if (m == null) return;
+        if (m.has("all")) {
+            int a = dp(m.optInt("all", 0));
+            lp.setMargins(a, a, a, a);
+        } else {
+            lp.setMargins(dp(m.optInt("left", 0)), dp(m.optInt("top", 0)),
+                           dp(m.optInt("right", 0)), dp(m.optInt("bottom", 0)));
+        }
+    }
+
+    static boolean declaresWidth(JSONObject json) {
+        JSONObject s = json != null ? json.optJSONObject("style") : null;
+        return s != null && s.has("width");
+    }
+
+    void applySize(View view, JSONObject s) {
+        if (s == null) return;
+        if (!s.has("width") && !s.has("height")) return;
+        ViewGroup.LayoutParams lp = view.getLayoutParams();
+        if (lp == null) {
+            lp = new ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        if (s.has("width"))  lp.width = dimension(s, "width", lp.width);
+        if (s.has("height")) lp.height = dimension(s, "height", lp.height);
+        view.setLayoutParams(lp);
+    }
+
+    int dimension(JSONObject s, String name, int fallback) {
+        Object raw = s.opt(name);
+        if (raw == null) return fallback;
+        if (raw instanceof Number) return dp((int) Math.round(((Number) raw).doubleValue()));
+        if (!(raw instanceof String)) return fallback;
+
+        String str = ((String) raw).trim().toLowerCase(java.util.Locale.US);
+        if (str.isEmpty()) return fallback;
+        if (str.equals("match") || str.equals("match_parent") || str.equals("fill")
+            || str.equals("100%") || str.equals("expand")) {
+            return ViewGroup.LayoutParams.MATCH_PARENT;
+        }
+        if (str.equals("wrap") || str.equals("wrap_content") || str.equals("auto")) {
+            return ViewGroup.LayoutParams.WRAP_CONTENT;
+        }
+
+        boolean vertical = "height".equals(name) || "minHeight".equals(name);
+        try {
+            if (str.endsWith("%w") || str.endsWith("%h") || str.endsWith("%s")) {
+                char axis = str.charAt(str.length() - 1);
+                float pct = Float.parseFloat(str.substring(0, str.length() - 2));
+                if (axis == 'w') return PydrudTheme.percentWidth(pct);
+                if (axis == 'h') return PydrudTheme.percentHeight(pct);
+                return PydrudTheme.percentShortest(pct);
+            }
+            if (str.endsWith("vw")) {
+                return PydrudTheme.percentWidth(
+                    Float.parseFloat(str.substring(0, str.length() - 2)));
+            }
+            if (str.endsWith("vh")) {
+                return PydrudTheme.percentHeight(
+                    Float.parseFloat(str.substring(0, str.length() - 2)));
+            }
+            if (str.endsWith("%")) {
+                float pct = Float.parseFloat(str.substring(0, str.length() - 1));
+                return vertical ? PydrudTheme.percentHeight(pct)
+                                : PydrudTheme.percentWidth(pct);
+            }
+            if (str.endsWith("px")) {
+                return Math.round(Float.parseFloat(str.substring(0, str.length() - 2)));
+            }
+            if (str.endsWith("dp")) {
+                return dp(Float.parseFloat(str.substring(0, str.length() - 2)));
+            }
+            return dp((float) Double.parseDouble(str));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    void warnUnknownStyleKeys(JSONObject s) {
+        if (s == null) return;
+        java.util.Iterator<String> it = s.keys();
+        while (it.hasNext()) {
+            String k = it.next();
+            if (k.startsWith("_") || KNOWN_KEYS.contains(k)) continue;
+            if (!WARNED_STYLE_KEYS.add(k)) continue;
+            Log.w(ViewFactory.TAG, "unhandled style key '" + k + "' — the native "
+                + "renderer does not read it; check the Pydrud style "
+                + "reference for the supported keys.");
+        }
+    }
+
+    void applyStyle(View view, JSONObject s) {
+        if (s == null) return;
+        warnUnknownStyleKeys(s);
+        try {
+            int radius = s.has("borderRadius") ? dp(s.optInt("borderRadius", 0)) : 0;
+            boolean hasBorder = s.has("border");
+            boolean hasBg = s.has("bg");
+            boolean hasGradient = s.has("gradient");
+            // Per-corner radii override the uniform radius on the sides given.
+            boolean hasCorners = s.has("borderTopLeftRadius")
+                || s.has("borderTopRightRadius")
+                || s.has("borderBottomLeftRadius")
+                || s.has("borderBottomRightRadius");
+            float[] corners = hasCorners ? cornerRadii(s, radius) : null;
+            boolean rounded = radius > 0 || hasCorners;
+            boolean skipBackground = view instanceof Button || view instanceof EditText
+                || view instanceof CompoundButton || view instanceof SeekBar
+                || view instanceof Spinner;
+
+            if (skipBackground) {
+                // These widgets own their background (ripple + state layers);
+                // overwriting it here would undo the Material styling.
+            } else if (hasGradient) {
+                GradientDrawable gd = gradientDrawable(s.optJSONObject("gradient"));
+                setCorners(gd, corners, radius);
+                applyBorder(gd, s);
+                view.setBackground(withSideBorders(gd, s));
+                if (rounded) view.setClipToOutline(true);
+            } else if (hasBg && !rounded && !hasBorder) {
+                int c = parseColor(s.optString("bg", ""), Color.TRANSPARENT);
+                view.setBackgroundColor(c);
+            } else if (hasBg || rounded || hasBorder) {
+                GradientDrawable gd = new GradientDrawable();
+                setCorners(gd, corners, radius);
+                gd.setColor(hasBg ? parseColor(s.optString("bg", ""), Color.TRANSPARENT)
+                                  : Color.TRANSPARENT);
+                applyBorder(gd, s);
+                view.setBackground(withSideBorders(gd, s));
+                if (rounded) view.setClipToOutline(true);
+            }
+
+            // Minimum sizes keep rows on the 48dp touch grid even when
+            // their content is short.
+            if (s.has("minHeight")) view.setMinimumHeight(
+                Math.max(0, dimension(s, "minHeight", 0)));
+            if (s.has("minWidth")) view.setMinimumWidth(
+                Math.max(0, dimension(s, "minWidth", 0)));
+
+            // Padding
+            if (s.has("padding")) {
+                JSONObject p = s.optJSONObject("padding");
+                if (p != null) {
+                    if (p.has("all")) {
+                        int a = dp(p.optInt("all", 0));
+                        view.setPadding(a, a, a, a);
+                    } else {
+                        view.setPadding(dp(p.optInt("left", 0)), dp(p.optInt("top", 0)),
+                                        dp(p.optInt("right", 0)), dp(p.optInt("bottom", 0)));
+                    }
+                }
+            }
+
+            // Margin (when the view already has margin-capable params)
+            if (s.has("margin") && view.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+                JSONObject m = s.optJSONObject("margin");
+                ViewGroup.MarginLayoutParams mlp =
+                    (ViewGroup.MarginLayoutParams) view.getLayoutParams();
+                if (m != null) {
+                    if (m.has("all")) {
+                        int a = dp(m.optInt("all", 0));
+                        mlp.setMargins(a, a, a, a);
+                    } else {
+                        mlp.setMargins(dp(m.optInt("left", 0)), dp(m.optInt("top", 0)),
+                                       dp(m.optInt("right", 0)), dp(m.optInt("bottom", 0)));
+                    }
+                }
+            }
+
+            // Absolute positioning (Positioned inside a Stack). The create
+            // path builds the offsets in frameParams(); re-apply them here or
+            // a sprite/badge/FAB only ever moves on the frame it was created
+            // (PB-006). Mirrors frameParams() exactly.
+            if ("absolute".equals(s.optString("position", ""))
+                    && view.getLayoutParams() instanceof FrameLayout.LayoutParams) {
+                FrameLayout.LayoutParams flp =
+                    (FrameLayout.LayoutParams) view.getLayoutParams();
+                int grav = Gravity.NO_GRAVITY;
+                if (s.has("left"))   { grav |= Gravity.START; flp.leftMargin = dp(s.optInt("left", 0)); }
+                if (s.has("right"))  { grav |= Gravity.END;   flp.rightMargin = dp(s.optInt("right", 0)); }
+                if (s.has("top"))    { grav |= Gravity.TOP;   flp.topMargin = dp(s.optInt("top", 0)); }
+                if (s.has("bottom")) {
+                    grav |= Gravity.BOTTOM;
+                    flp.bottomMargin = dp(s.optInt("bottom", 0))
+                        + (s.optBoolean("safeAreaBottom", true) ? PydrudTheme.insetBottom : 0);
+                }
+                if (grav == Gravity.NO_GRAVITY) grav = Gravity.TOP | Gravity.START;
+                flp.gravity = grav;
+                view.setLayoutParams(flp);
+            }
+
+            // Gravity for layout containers / text
+            if (s.has("alignment")) {
+                int g = gravity(s.optString("alignment", ""));
+                if (view instanceof TextView) ((TextView) view).setGravity(g);
+                else if (view instanceof LinearLayout) ((LinearLayout) view).setGravity(g);
+                else if (view instanceof FrameLayout) {
+                    FrameLayout fl = (FrameLayout) view;
+                    for (int i = 0; i < fl.getChildCount(); i++) {
+                        View child = fl.getChildAt(i);
+                        ViewGroup.LayoutParams clp = child.getLayoutParams();
+                        if (clp instanceof FrameLayout.LayoutParams) {
+                            ((FrameLayout.LayoutParams) clp).gravity = g;
+                            child.setLayoutParams(clp);
+                        }
+                    }
+                }
+            }
+
+            // Font — real weights (API 28+), tuned tracking and line height.
+            if (s.has("font") && view instanceof TextView) {
+                JSONObject f = s.optJSONObject("font");
+                TextView tv = (TextView) view;
+                if (f != null) {
+                    float size = (float) f.optDouble("size", tv.getTextSize()
+                        / vf.activity.getResources().getDisplayMetrics().scaledDensity);
+                    if (f.has("size")) {
+                        tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP,
+                                       PydrudTheme.scaledSp(size));
+                    }
+                    if (f.has("color")) {
+                        tv.setTextColor(parseColor(f.optString("color", ""),
+                                                   tv.getCurrentTextColor()));
+                    }
+                    int weight = f.optInt("weight", 400);
+                    boolean italic = f.optBoolean("italic", false);
+                    String family = f.optString("family", "");
+                    tv.setTypeface(resolveTypeface(family, weight, italic));
+
+                    // Tracking and leading are each applied **once**: an
+                    // explicit value wins, otherwise one is derived from the
+                    // type scale. Applying both — the derived value and then
+                    // the explicit one — left the two disagreeing on every
+                    // call, so a widget re-styled on each animation frame
+                    // (the Heartbeat reading) re-laid-out every frame, and a
+                    // single-line TextView would flash a stale glyph while
+                    // it did. Skipping the no-op keeps the layout intact.
+                    boolean derived = f.has("size") || f.has("weight");
+                    float tracking = f.has("letterSpacing")
+                        ? (float) f.optDouble("letterSpacing", 0)
+                        : (derived ? PydrudTheme.letterSpacingFor(size, weight)
+                                   : Float.NaN);
+                    if (!Float.isNaN(tracking) && tv.getLetterSpacing() != tracking) {
+                        tv.setLetterSpacing(tracking);
+                    }
+                    float leading = f.has("lineHeight")
+                        ? (float) f.optDouble("lineHeight", 1.22)
+                        : (derived ? (size >= PydrudTheme.textHeadline
+                                      ? PydrudTheme.lineHeight * 0.82f
+                                      : PydrudTheme.lineHeight) : Float.NaN);
+                    if (!Float.isNaN(leading)
+                            && (tv.getLineSpacingMultiplier() != leading
+                                || tv.getLineSpacingExtra() != 0f)) {
+                        tv.setLineSpacing(0f, leading);
+                    }
+                    if (f.optBoolean("underline", false)) {
+                        tv.setPaintFlags(tv.getPaintFlags()
+                            | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
+                    }
+                    if (f.optBoolean("strikethrough", false)) {
+                        tv.setPaintFlags(tv.getPaintFlags()
+                            | android.graphics.Paint.STRIKE_THRU_TEXT_FLAG);
+                    }
+                }
+            }
+
+            // Text alignment
+            if (s.has("textAlign") && view instanceof TextView) {
+                TextView tv = (TextView) view;
+                switch (s.optString("textAlign", "left")) {
+                    case "center": tv.setGravity(Gravity.CENTER); break;
+                    case "right":  tv.setGravity(Gravity.END | Gravity.CENTER_VERTICAL); break;
+                    default:       tv.setGravity(Gravity.START | Gravity.CENTER_VERTICAL); break;
+                }
+            }
+
+            if (s.has("opacity")) view.setAlpha((float) s.optDouble("opacity", 1.0));
+            if (s.has("rotate")) view.setRotation((float) s.optDouble("rotate", 0));
+            // `scale` is also applied in applyTransforms() on the create path;
+            // re-apply it here so a *patch* that changes scale is not dropped
+            // (applyTransforms only runs when the view is first built).
+            if (s.has("scale")) {
+                float scale = (float) s.optDouble("scale", 1.0);
+                view.setScaleX(scale);
+                view.setScaleY(scale);
+            }
+            // CSS `filter: blur()` — a RenderEffect on Android 12+ (API 31).
+            if (s.has("blur")) applyBlur(view, s);
+            if (s.has("elevation")) {
+                PydrudTheme.elevate(view, (float) s.optDouble("elevation", 0));
+            }
+            if (s.has("visible")) {
+                view.setVisibility(s.optBoolean("visible", true) ? View.VISIBLE : View.GONE);
+            }
+            if (s.has("tooltip") && android.os.Build.VERSION.SDK_INT >= 26) {
+                view.setTooltipText(s.optString("tooltip", ""));
+            }
+            if (s.has("fit") && view instanceof ImageView) {
+                ((ImageView) view).setScaleType(scaleType(s.optString("fit", "contain")));
+            }
+            // Custom drop shadow ({offsetX, offsetY, blur, spread, color} or a
+            // plain number) and an opt-in bounded ripple.
+            if (s.has("shadow")) applyShadow(view, s);
+            if (s.has("ripple") && !skipBackground) applyRipple(view, s, radius);
+            if (s.has("aspectRatio")) applyAspectRatio(view, s);
+        } catch (Exception e) {
+            Log.w(ViewFactory.TAG, "Style error", e);
+        }
+    }
+
+    /** Size one axis from the other so the view keeps ``width / height``. */
+    void applyAspectRatio(View view, JSONObject s) {
+        final float ratio = (float) s.optDouble("aspectRatio", 0);
+        if (ratio <= 0) return;
+        view.getViewTreeObserver().addOnGlobalLayoutListener(
+            new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+                @Override public void onGlobalLayout() {
+                    ViewGroup.LayoutParams lp = view.getLayoutParams();
+                    int w = view.getWidth();
+                    if (lp == null || w <= 0) return;
+                    int target = Math.max(1, (int) (w / ratio));
+                    view.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                    if (lp.height != target) {
+                        lp.height = target;
+                        view.setLayoutParams(lp);
+                    }
+                }
+            });
+    }
+
+    float[] cornerRadii(JSONObject s, int uniform) {
+        int tl = s.has("borderTopLeftRadius") ? dp(s.optInt("borderTopLeftRadius", 0)) : uniform;
+        int tr = s.has("borderTopRightRadius") ? dp(s.optInt("borderTopRightRadius", 0)) : uniform;
+        int br = s.has("borderBottomRightRadius") ? dp(s.optInt("borderBottomRightRadius", 0)) : uniform;
+        int bl = s.has("borderBottomLeftRadius") ? dp(s.optInt("borderBottomLeftRadius", 0)) : uniform;
+        return new float[]{ tl, tl, tr, tr, br, br, bl, bl };
+    }
+
+    void setCorners(GradientDrawable gd, float[] corners, int uniform) {
+        if (corners != null) gd.setCornerRadii(corners);
+        else gd.setCornerRadius(uniform);
+    }
+
+    /** A soft drop shadow: text uses a paint shadow, views use elevation. */
+    void applyShadow(View view, JSONObject s) {
+        float ox, oy, blur, spread;
+        int color;
+        JSONObject sh = s.optJSONObject("shadow");
+        if (sh != null) {
+            ox = (float) sh.optDouble("offsetX", PydrudTheme.shadowOffsetX);
+            oy = (float) sh.optDouble("offsetY", PydrudTheme.shadowOffsetY);
+            blur = (float) sh.optDouble("blur", PydrudTheme.shadowBlur);
+            spread = (float) sh.optDouble("spread", PydrudTheme.shadowSpread);
+            color = parseColor(sh.optString("color", PydrudTheme.shadowColor), 0);
+        } else {
+            // A plain number is a quick elevation-style shadow.
+            float n = (float) s.optDouble("shadow", 0);
+            ox = PydrudTheme.shadowOffsetX;
+            oy = n > 0 ? Math.max(1f, n * 0.5f) : PydrudTheme.shadowOffsetY;
+            blur = n > 0 ? n : PydrudTheme.shadowBlur;
+            spread = PydrudTheme.shadowSpread;
+            color = parseColor(PydrudTheme.shadowColor, 0);
+        }
+        int tint = color != 0 ? color : 0x40000000;
+        if (view instanceof TextView) {
+            ((TextView) view).setShadowLayer(dp(Math.max(0f, blur)), dp(ox), dp(oy), tint);
+        } else if (android.os.Build.VERSION.SDK_INT >= 28) {
+            view.setElevation(dp(Math.max(0f, blur + spread)));
+            view.setOutlineSpotShadowColor(tint);
+            view.setOutlineAmbientShadowColor(tint);
+            if (view.getBackground() != null) {
+                view.setOutlineProvider(android.view.ViewOutlineProvider.BACKGROUND);
+            }
+        } else {
+            PydrudTheme.elevate(view, Math.max(0f, blur));
+        }
+    }
+
+    /** An opt-in bounded ripple; ``ripple: none`` disables it. */
+    void applyRipple(View view, JSONObject s, int radius) {
+        String spec = s.optString("ripple", "");
+        if (spec.isEmpty() || "none".equalsIgnoreCase(spec)
+                || "false".equalsIgnoreCase(spec)) return;
+        int color = parseColor(spec, 0x1F000000);
+        PydrudTheme.addRipple(view, color, radius);
+    }
+
+    android.graphics.Typeface resolveTypeface(String family, int weight,
+                                                      boolean italic) {
+        if (family == null || family.isEmpty()) {
+            return PydrudTheme.typeface(weight, italic);
+        }
+        String cacheKey = family.toLowerCase(java.util.Locale.US).trim();
+        if (FONT_CACHE.containsKey(cacheKey)) {
+            android.graphics.Typeface cached = FONT_CACHE.get(cacheKey);
+            if (cached != null) return cached;
+        } else {
+            android.graphics.Typeface custom = null;
+            String base = cacheKey.endsWith(".ttf") || cacheKey.endsWith(".otf")
+                ? family : null;
+            String[] candidates = base != null
+                ? new String[]{ family, "fonts/" + family }
+                : new String[]{ "fonts/" + family + ".ttf", "fonts/" + family + ".otf" };
+            for (String path : candidates) {
+                try {
+                    custom = android.graphics.Typeface.createFromAsset(
+                        vf.activity.getAssets(), path);
+                    break;
+                } catch (Exception ignored) { }
+            }
+            FONT_CACHE.put(cacheKey, custom);
+            if (custom != null) return custom;
+        }
+        return PydrudTheme.typeface(family, weight, italic);
+    }
+
+    int dp(int value) {
+        return PydrudTheme.dp(value);
+    }
+
+    int dp(float value) {
+        return PydrudTheme.dp(value);
+    }
+
+    int parseColor(String value, int fallback) {
+        return PydrudTheme.parse(value, fallback);
+    }
+
+    GradientDrawable gradientDrawable(JSONObject g) {
+        GradientDrawable gd = new GradientDrawable();
+        if (g == null) return gd;
+        JSONArray colorsJson = g.optJSONArray("colors");
+        int[] colors;
+        if (colorsJson != null && colorsJson.length() >= 2) {
+            colors = new int[colorsJson.length()];
+            for (int i = 0; i < colorsJson.length(); i++) {
+                colors[i] = parseColor(colorsJson.optString(i, ""), PydrudTheme.primary);
+            }
+        } else {
+            colors = new int[]{PydrudTheme.primary,
+                               PydrudTheme.lighten(PydrudTheme.primary, 0.3f)};
+        }
+        // Optional colour stops: positions in [0,1], one per colour.
+        JSONArray posJson = g.optJSONArray("positions");
+        float[] positions = null;
+        if (posJson != null && posJson.length() == colors.length) {
+            positions = new float[posJson.length()];
+            for (int i = 0; i < posJson.length(); i++) {
+                positions[i] = (float) posJson.optDouble(i, 0);
+            }
+        }
+        if (positions != null) gd.setColors(colors, positions);
+        else gd.setColors(colors);
+        gd.setOrientation(gradientOrientation(g));
+        String kind = g.optString("kind", "linear");
+        if ("radial".equals(kind)) {
+            gd.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+            gd.setGradientRadius(dp((float) g.optDouble("radius", 160)));
+        } else if ("sweep".equals(kind)) {
+            gd.setGradientType(GradientDrawable.SWEEP_GRADIENT);
+        }
+        return gd;
+    }
+
+    /** Orientation from a CSS-style ``angle`` (0=up, 90=right) or a name. */
+    GradientDrawable.Orientation gradientOrientation(JSONObject g) {
+        if (g.has("angle")) {
+            double a = ((g.optDouble("angle", 180) % 360) + 360) % 360;
+            if (a < 22.5 || a >= 337.5)  return GradientDrawable.Orientation.BOTTOM_TOP;
+            if (a < 67.5)                return GradientDrawable.Orientation.BL_TR;
+            if (a < 112.5)               return GradientDrawable.Orientation.LEFT_RIGHT;
+            if (a < 157.5)               return GradientDrawable.Orientation.TL_BR;
+            if (a < 202.5)               return GradientDrawable.Orientation.TOP_BOTTOM;
+            if (a < 247.5)               return GradientDrawable.Orientation.TR_BL;
+            if (a < 292.5)               return GradientDrawable.Orientation.RIGHT_LEFT;
+            return GradientDrawable.Orientation.BR_TL;
+        }
+        return gradientOrientation(g.optString("direction", "vertical"));
+    }
+
+    GradientDrawable.Orientation gradientOrientation(String direction) {
+        switch (direction) {
+            case "horizontal": return GradientDrawable.Orientation.LEFT_RIGHT;
+            case "diagonal":   return GradientDrawable.Orientation.TL_BR;
+            case "diagonal_up": return GradientDrawable.Orientation.BL_TR;
+            case "up":         return GradientDrawable.Orientation.BOTTOM_TOP;
+            default:           return GradientDrawable.Orientation.TOP_BOTTOM;
+        }
+    }
+
+    void applyBorder(GradientDrawable gd, JSONObject s) {
+        JSONObject b = s.optJSONObject("border");
+        if (b == null) return;
+        JSONObject side = b.optJSONObject("all");
+        if (side == null && uniformBorder(b)) side = b.optJSONObject("left");
+        if (side == null) {
+            // Flat "border": {"width": 1, "color": "#..."} shorthand.
+            if (b.has("width") || b.has("color")) side = b;
+            else return;
+        }
+        int width = dp((float) side.optDouble("width", 1));
+        if (width <= 0) return;
+        gd.setStroke(width, parseColor(side.optString("color", ""), PydrudTheme.outline));
+    }
+
+    boolean uniformBorder(JSONObject b) {
+        String[] names = {"left", "top", "right", "bottom"};
+        double width = -1;
+        String color = null;
+        for (String name : names) {
+            JSONObject side = b.optJSONObject(name);
+            if (side == null) return false;           // a side is missing
+            double w = side.optDouble("width", 1);
+            String c = side.optString("color", "");
+            if (width < 0) { width = w; color = c; }
+            else if (w != width || !c.equals(color)) return false;
+        }
+        return true;
+    }
+
+    android.graphics.drawable.Drawable withSideBorders(
+            android.graphics.drawable.Drawable background, JSONObject s) {
+        JSONObject b = s.optJSONObject("border");
+        if (b == null || b.optJSONObject("all") != null || uniformBorder(b)) return background;
+        int[] widths = new int[4];
+        int color = PydrudTheme.outline;
+        String[] names = {"left", "top", "right", "bottom"};
+        boolean any = false;
+        for (int i = 0; i < names.length; i++) {
+            JSONObject side = b.optJSONObject(names[i]);
+            if (side == null) continue;
+            widths[i] = dp((float) side.optDouble("width", 1));
+            if (widths[i] > 0) {
+                any = true;
+                color = parseColor(side.optString("color", ""), PydrudTheme.outline);
+            }
+        }
+        if (!any) return background;
+        android.graphics.drawable.LayerDrawable layers =
+            new android.graphics.drawable.LayerDrawable(
+                new android.graphics.drawable.Drawable[] {
+                    new android.graphics.drawable.ColorDrawable(color), background });
+        layers.setLayerInset(1, widths[0], widths[1], widths[2], widths[3]);
+        return layers;
+    }
+
+    ImageView.ScaleType scaleType(String fit) {
+        switch (fit) {
+            case "cover":     return ImageView.ScaleType.CENTER_CROP;
+            case "fill":      return ImageView.ScaleType.FIT_XY;
+            case "fitWidth":  return ImageView.ScaleType.FIT_START;
+            case "fitHeight": return ImageView.ScaleType.FIT_END;
+            case "none":      return ImageView.ScaleType.CENTER;
+            default:          return ImageView.ScaleType.FIT_CENTER;
+        }
+    }
+
+    int gravity(String align) {
+        switch (align) {
+            case "topLeft":      return Gravity.TOP | Gravity.START;
+            case "topCenter":    return Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+            case "topRight":     return Gravity.TOP | Gravity.END;
+            case "centerLeft":   case "start": case "left":
+                                   return Gravity.CENTER_VERTICAL | Gravity.START;
+            case "center":       return Gravity.CENTER;
+            case "centerRight":  case "end": case "right":
+                                   return Gravity.CENTER_VERTICAL | Gravity.END;
+            case "bottomLeft":   return Gravity.BOTTOM | Gravity.START;
+            case "bottomCenter": return Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+            case "bottomRight":  return Gravity.BOTTOM | Gravity.END;
+            // Plain single-axis names used by Row/Column alignment params.
+            case "top":          return Gravity.TOP;
+            case "bottom":       return Gravity.BOTTOM;
+            default:             return Gravity.NO_GRAVITY;
+        }
+    }
+
+    void applyTransforms(View view, JSONObject style) {
+        if (style == null) return;
+        if (style.has("opacity")) {
+            view.setAlpha((float) style.optDouble("opacity", 1.0));
+        }
+        if (style.has("scale")) {
+            float scale = (float) style.optDouble("scale", 1.0);
+            view.setScaleX(scale);
+            view.setScaleY(scale);
+        }
+        if (style.has("rotation")) {
+            view.setRotation((float) style.optDouble("rotation", 0));
+        }
+    }
+
+    /**
+     * Gaussian blur of the view's own rendering, like CSS {@code filter:
+     * blur()} — use it to soften a background image or a whole panel's
+     * content. {@code blur} is a radius in dp; the view is drawn through a
+     * hardware layer with a RenderEffect (Android 12 / API 31 and newer).
+     * Older devices have no cheap equivalent, so the view renders unblurred
+     * and we say so once. Blurring what is *behind* a view is window-level
+     * only ({@code Window.setBackgroundBlurRadius}) and not offered here.
+     */
+    void applyBlur(View view, JSONObject s) {
+        float radius = (float) s.optDouble("blur", 0);
+        if (radius <= 0) {
+            if (android.os.Build.VERSION.SDK_INT >= 31) view.setRenderEffect(null);
+            return;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            float px = dp(radius);
+            view.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+            view.setRenderEffect(
+                android.graphics.RenderEffect.createBlurEffect(
+                    px, px, android.graphics.Shader.TileMode.CLAMP));
+        } else if (BLUR_WARNED.compareAndSet(false, true)) {
+            Log.w(ViewFactory.TAG, "style 'blur' needs Android 12 (API 31+); "
+                + "the view renders unblurred on this device.");
+        }
+    }
+
+    android.view.animation.Interpolator interpolator(JSONObject spec) {
+        String curve = spec != null ? spec.optString("curve", "ease_in_out") : "ease_in_out";
+        switch (curve) {
+            case "linear":      return new android.view.animation.LinearInterpolator();
+            case "ease":        case "ease_in_out":
+                return new android.view.animation.AccelerateDecelerateInterpolator();
+            case "ease_in":     case "accelerate":
+                return new android.view.animation.AccelerateInterpolator();
+            case "ease_out":    case "decelerate":
+                return new android.view.animation.DecelerateInterpolator();
+            case "bounce":      return new android.view.animation.BounceInterpolator();
+            case "overshoot":   return new android.view.animation.OvershootInterpolator();
+            case "anticipate":  return new android.view.animation.AnticipateInterpolator();
+            default:
+                if (curve.startsWith("cubic-bezier(")) return cubicBezier(curve);
+                return new android.view.animation.AccelerateDecelerateInterpolator();
+        }
+    }
+
+    /** Parse a CSS ``cubic-bezier(x1, y1, x2, y2)`` timing function. */
+    android.view.animation.Interpolator cubicBezier(String text) {
+        String inner = text.substring(text.indexOf('(') + 1);
+        int close = inner.indexOf(')');
+        if (close >= 0) inner = inner.substring(0, close);
+        String[] parts = inner.split(",");
+        if (parts.length != 4) {
+            return new android.view.animation.AccelerateDecelerateInterpolator();
+        }
+        try {
+            float x1 = Float.parseFloat(parts[0].trim());
+            float y1 = Float.parseFloat(parts[1].trim());
+            float x2 = Float.parseFloat(parts[2].trim());
+            float y2 = Float.parseFloat(parts[3].trim());
+            return new android.view.animation.PathInterpolator(x1, y1, x2, y2);
+        } catch (NumberFormatException e) {
+            return new android.view.animation.AccelerateDecelerateInterpolator();
+        }
+    }
+
+}

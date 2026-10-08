@@ -1,0 +1,21 @@
+package com.pydrud.pydash;
+
+/**
+ * Chooses the Python runtime backend at build time.
+ *
+ * The backend is fixed when the project is generated (`pydrud sync` writes
+ * {@link PydrudRuntimeConfig#BACKEND}), so the selection is a compile-time
+ * constant and only the chosen backend class is ever referenced. This is what
+ * keeps Chaquopy optional: a project built with the host or none backend has
+ * no Chaquopy dependency anywhere in its sources or Gradle files.
+ */
+public final class PydrudRuntimeFactory {
+
+    private PydrudRuntimeFactory() {
+    }
+
+    /** The active backend for this build. */
+    public static PythonRuntime create() {
+        return new ChaquopyRuntime();
+    }
+}

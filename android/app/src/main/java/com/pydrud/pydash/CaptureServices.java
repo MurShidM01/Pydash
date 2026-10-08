@@ -36,6 +36,7 @@ public class CaptureServices {
 
     /** Request code for the speech-recognition activity. */
     private static final int SPEECH_REQUEST = 9701;
+
     private String speechRequestId = "";
 
     private android.location.LocationListener locationListener;

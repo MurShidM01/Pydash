@@ -11,11 +11,11 @@
 -->
 <resources>
     <style name="Theme.Pydash" parent="Theme.Material3.Dark.NoActionBar">
-        <item name="colorPrimary">#FF8A8CF4</item>
+        <item name="colorPrimary">#FF7B74EC</item>
         <item name="colorOnPrimary">#FF111827</item>
-        <item name="colorPrimaryContainer">#FF2D2E6C</item>
+        <item name="colorPrimaryContainer">#FF242067</item>
         <item name="colorOnPrimaryContainer">#FFFFFFFF</item>
-        <item name="colorSecondary">#FFD29FF2</item>
+        <item name="colorSecondary">#FFC880E8</item>
         <item name="colorOnSecondary">#FF111827</item>
         <item name="colorSurface">#FF1F2937</item>
         <item name="colorOnSurface">#FFF9FAFB</item>

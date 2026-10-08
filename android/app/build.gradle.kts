@@ -3,7 +3,8 @@ import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
-    id("com.chaquo.python")}
+    id("com.chaquo.python")
+}
 
 // Release signing is configured through keystore.properties, which
 // `pydrud keygen` writes and .gitignore excludes. Without it, release
@@ -25,8 +26,10 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = "2.0.0"
 
+        // The embedded CPython interpreter ships one native library per ABI;
+        // a host/none build has no interpreter, so it lists none.
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
@@ -65,7 +68,7 @@ android {
     }
 
     bundle {
-        language { enableSplit = false }   // Chaquopy needs every locale
+        language { enableSplit = false }   // one APK with every locale
     }
 
     packaging {
@@ -115,6 +118,11 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.work:work-runtime:2.9.1")
     implementation("androidx.biometric:biometric:1.1.0")
+    // Camera stack — CameraPreview, page.camera and barcode/QR scanning.
+    // Opt-in because it ships ~10 MB of native libraries (libimage_processing
+    // _util_jni.so and ML Kit's libbarhopper_v3.so) into every APK. Enable it
+    // with `camera: true` in pydrud.yaml, or simply declare the CAMERA
+    // permission (`pydrud permissions add camera`), then run `pydrud sync`.
     implementation("androidx.camera:camera-core:1.3.4")
     implementation("androidx.camera:camera-camera2:1.3.4")
     implementation("androidx.camera:camera-lifecycle:1.3.4")

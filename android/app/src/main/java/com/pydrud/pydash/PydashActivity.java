@@ -14,10 +14,6 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.activity.OnBackPressedCallback;
 
-import com.chaquo.python.PyObject;
-import com.chaquo.python.Python;
-import com.chaquo.python.android.AndroidPlatform;
-
 public class PydashActivity extends AppCompatActivity {
 
     private static final String TAG = "PydrudActivity";
@@ -29,6 +25,8 @@ public class PydashActivity extends AppCompatActivity {
     protected ViewFactory viewFactory;
     protected EventDispatcher eventDispatcher;
     protected BridgeService bridge;
+    /** The Python backend for this build (Chaquopy, host or none). */
+    protected PythonRuntime runtime;
 
     private volatile boolean pythonStarted = false;
     private volatile boolean awaitingBackResult = false;
@@ -119,23 +117,22 @@ public class PydashActivity extends AppCompatActivity {
         bridge = new BridgeService(this, rootView, viewFactory, eventDispatcher);
         eventDispatcher.setBridge(bridge);
 
+        // The Python backend is chosen at build time (see PydrudRuntimeFactory);
+        // the activity itself never mentions Chaquopy or any other runtime.
+        runtime = PydrudRuntimeFactory.create();
+
         new Thread(() -> {
             try {
-                if (!Python.isStarted()) {
-                    Python.start(new AndroidPlatform(this));
-                }
+                runtime.start(this);
                 pythonStarted = true;
-                Log.i(TAG, "Python interpreter started");
 
                 // Start listening *before* Python tries to connect.
                 bridge.start();
                 bridge.awaitListening(5000);
 
-                Log.i(TAG, "Invoking Python app.main.start_app()");
-                PyObject module = Python.getInstance().getModule("app.main");
-                module.callAttr("start_app");
+                runtime.startApp("app.android_main");
             } catch (Throwable t) {
-                Log.e(TAG, "Failed to start Python app", t);
+                Log.e(TAG, "Failed to start the Python runtime", t);
                 runOnUiThread(() -> showFatal(t));
             }
         }, "pydrud-python").start();
@@ -905,11 +902,36 @@ public class PydashActivity extends AppCompatActivity {
             });
     }
 
-    /** Animate the next full render (Router transitions). */
+    /** A route transition waiting for the incoming screen to be built. */
+    private volatile String pendingTransition = null;
+    private volatile int pendingTransitionDuration = 220;
+
+    /**
+     * Queue the animation for the *next* full render.
+     *
+     * <p>The router sends this just before it rebuilds the screen, so the
+     * tree it animates is the one that is about to arrive — animating the
+     * outgoing screen and then swapping in the new one un-animated looks
+     * like a stutter. {@link #runPendingRouteTransition()} is called by the
+     * bridge once the new snapshot is in place.
+     */
     public void setRouteTransition(final String transition, final int duration) {
         if (rootView == null || "none".equals(transition)) return;
-        runOnUiThread(new Runnable() {
+        pendingTransition = transition;
+        pendingTransitionDuration = Math.max(1, duration);
+    }
+
+    /** Animate the freshly built screen in (called after a snapshot). */
+    public void runPendingRouteTransition() {
+        final String transition = pendingTransition;
+        if (transition == null || rootView == null) return;
+        pendingTransition = null;
+        final int duration = pendingTransitionDuration;
+        // Post so the animation runs after the new children are measured and
+        // laid out; otherwise the slide starts from a zero-height view.
+        rootView.post(new Runnable() {
             @Override public void run() {
+                if (rootView == null) return;
                 android.view.animation.Animation anim;
                 if (transition.startsWith("slide")) {
                     float fromX = "slide_right".equals(transition) ? -1f
@@ -926,6 +948,17 @@ public class PydashActivity extends AppCompatActivity {
                         0.92f, 1f,
                         android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f,
                         android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f);
+                } else if ("shared_axis".equals(transition)) {
+                    // Material's shared-axis Z: fade while settling from a
+                    // slight scale, forward for a push and backward for a pop.
+                    android.view.animation.AnimationSet set =
+                        new android.view.animation.AnimationSet(true);
+                    set.addAnimation(new android.view.animation.AlphaAnimation(0f, 1f));
+                    set.addAnimation(new android.view.animation.ScaleAnimation(
+                        0.96f, 1f, 0.96f, 1f,
+                        android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f,
+                        android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f));
+                    anim = set;
                 } else {
                     anim = new android.view.animation.AlphaAnimation(0f, 1f);
                 }
@@ -941,6 +974,7 @@ public class PydashActivity extends AppCompatActivity {
     protected void onDestroy() {
         sendLifecycle("destroy");
         if (bridge != null) bridge.stop();
+        if (runtime != null) runtime.shutdown();
         if (viewFactory != null) viewFactory.clear();
         stopCamera();
         if (bridge != null && bridge.platform() != null) {
