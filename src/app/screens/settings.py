@@ -18,10 +18,14 @@ from __future__ import annotations
 from typing import Any
 
 from pydrud import (
+    Colors,
     Column,
     Container,
     Icons,
     ListTile,
+    MediaQuery,
+    Responsive,
+    Row,
     SegmentedButton,
     State,
     SwitchListTile,
@@ -34,6 +38,7 @@ from app.config import (
     APP_NAME,
     APP_VERSION,
     PACKAGE,
+    PALETTES,
     PREVIEW_PROTOCOL_VERSION,
     PYDRUD_DOCS,
     PYDRUD_REPO,
@@ -63,6 +68,7 @@ def body() -> Column:
         style={"padding": theme.page_insets(top=16, bottom=28)},
         children=[
             _appearance(),
+            _colour(),
             _behaviour(),
             _about(),
             _links(),
@@ -118,6 +124,111 @@ def _on_theme_change(event) -> None:
         theme.apply_theme_mode(page, mode)
     prefs.save(theme_mode=mode)
     refresh()
+
+
+# ── colour ───────────────────────────────────────────────────────────────────
+
+#: Minimum breathing room between swatches on a partly-filled row, in dp.
+_SWATCH_GAP = 8
+
+
+def _colour() -> Column:
+    """The accent-palette picker — tap a swatch to re-tint the whole app.
+
+    The swatches sit in a responsive grid. The column count follows the window
+    (four on tiny phones, six on phones and small tablets, a single row on a
+    wide tablet) and every full row spreads its swatches *evenly*, so the gaps
+    between them grow with the screen instead of the palette bunching to one
+    side. Narrow screens drop a column and wrap onto an extra row.
+    """
+    swatches = [_swatch(name, seed) for name, seed in PALETTES]
+    columns = _palette_columns()
+    rows = [
+        _palette_row(index // columns, swatches[index:index + columns], columns)
+        for index in range(0, len(swatches), columns)
+    ]
+    return Column(key="pd_colour", spacing=10, children=[
+        section_header("Colour", caption="ACCENT PALETTE",
+                       key="pd_colour_section"),
+        card(key="pd_colour_card", spacing=14, child=[
+            Text("Accent colour", key="pd_colour_title", class_="pd-meta-val"),
+            *rows,
+            Text(
+                "Re-tints buttons, borders, highlights and the whole palette — "
+                "in light and dark.",
+                key="pd_colour_hint", class_="pd-body",
+            ),
+        ]),
+    ])
+
+
+def _palette_columns() -> int:
+    """How many swatches fit on one row of the current window.
+
+    Narrow windows get fewer columns so the palette wraps onto more rows;
+    wide ones fit the whole set on a single row.
+    """
+    width = float(MediaQuery.width)
+    if width < 340:
+        return 4
+    if width < 840:
+        return 6
+    return len(PALETTES)
+
+
+def _palette_row(index: int, items: list, columns: int) -> Row:
+    """One row of swatches — spread evenly when full, centred when not.
+
+    A full row spans the card and distributes its swatches with
+    ``space_evenly`` so the gaps scale with the screen; a short final row is
+    centred instead of left-hugging.
+    """
+    full = len(items) == columns
+    return Row(
+        key=f"pd_palette_row_{index}",
+        spacing=0 if full else _SWATCH_GAP,
+        main_axis_size="max",
+        vertical_alignment="center",
+        horizontal_alignment="space_evenly" if full else "center",
+        children=items,
+    )
+
+
+def _swatch(name: str, seed: str) -> Container:
+    """One tappable palette swatch; the active one wears a ring and a tick."""
+    selected = str(state.theme_color.value) == name
+    size = _swatch_size()
+    style: dict = {
+        "width": size, "height": size, "borderRadius": 999, "bg": seed,
+        "alignment": "center",
+    }
+    style.update(theme.hairline(theme.text(), 3) if selected
+                 else theme.hairline())
+    return Container(
+        key=f"pd_palette_{_slug(name)}",
+        style=style,
+        child=(Text("✓", key=f"pd_palette_{_slug(name)}_check", size=18,
+                    weight=800, color=Colors.on(seed)) if selected else None),
+    ).on_click(lambda _e, n=name: _on_palette(n))
+
+
+def _swatch_size() -> float:
+    """Swatch diameter in dp — a touch larger on roomier screens."""
+    return float(Responsive.value(compact=40, medium=44, expanded=44,
+                                  large=48))
+
+
+def _on_palette(name: str) -> None:
+    state.theme_color.value = name
+    page = _page()
+    if page is not None:
+        theme.apply_palette(page, name)
+    prefs.save(theme_color=name)
+    refresh()
+
+
+def _slug(name: str) -> str:
+    return name.lower().replace(" ", "_").replace("-", "_")
 
 
 # ── behaviour ────────────────────────────────────────────────────────────────

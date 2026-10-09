@@ -186,16 +186,24 @@ def _manual_card() -> Container:
         ),
         Button("Connect", icon=Icons.ARROW_FORWARD, full_width=True, size="lg",
                on_click=lambda _e: _connect_manual()),
-        Row(
+        # A full-width box with a content-sized row centred inside it — the
+        # reliable way to centre in this layout engine (a Row's own
+        # horizontal alignment does not centre natively).
+        Container(
             key="pd_manual_aux",
-            spacing=10,
-            main_axis_size="min",
-            children=[
-                OutlinedButton("Paste", icon=Icons.PASTE,
-                               on_click=lambda _e: _paste()),
-                OutlinedButton("Clear", icon=Icons.CLOSE,
-                               on_click=lambda _e: _clear()),
-            ],
+            width="match",
+            alignment="center",
+            child=Row(
+                key="pd_manual_aux_row",
+                spacing=10,
+                main_axis_size="min",
+                children=[
+                    OutlinedButton("Paste", icon=Icons.PASTE,
+                                   on_click=lambda _e: _paste()),
+                    OutlinedButton("Clear", icon=Icons.CLOSE,
+                                   on_click=lambda _e: _clear()),
+                ],
+            ),
         ),
     ])
 

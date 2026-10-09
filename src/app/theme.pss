@@ -30,6 +30,9 @@
 }
 
 /* ── Surfaces ────────────────────────────────────────────────────────── */
+/* Borders are applied by the `card()` / `stat_tile()` helpers with the
+ * theme-driven `theme.hairline()` (brand colour at 45%, 1.4dp), so they match
+ * the outlined-button stroke and follow the palette. */
 
 .pd-card {
     bg: $surface;
@@ -49,11 +52,20 @@
     padding: { left: $card_padding, right: $card_padding, top: 14, bottom: 14 };
 }
 
+/* A card outlined in the brand colour — the "featured" surface. */
+.pd-card-accent {
+    bg: $surface;
+    border-radius: $radius_card;
+    padding: $card_padding;
+}
+
 /* ── Brand hero ──────────────────────────────────────────────────────── */
 
 .pd-hero {
     border-radius: 24;
     padding: 22;
+    border-color: #33FFFFFF;
+    border-width: 1;
 }
 
 .pd-hero-title {
@@ -103,6 +115,8 @@
 .pd-pill {
     border-radius: 999;
     padding: { left: 10, right: 10, top: 5, bottom: 5 };
+    border-color: $outline;
+    border-width: 1;
 }
 
 .pd-pill-text {
@@ -158,4 +172,23 @@
     border-radius: 14;
     bg: $surface_variant;
     alignment: center;
+    border-color: $outline;
+    border-width: 1;
+}
+
+/* ── Section accent ──────────────────────────────────────────────────── */
+
+/* The short brand bar that leads every section title. */
+.pd-section-accent {
+    width: 4;
+    height: 18;
+    border-radius: 999;
+    bg: $primary;
+}
+
+/* A tinted capsule used for the "LIVE" and other state tags. */
+.pd-tag {
+    border-radius: 999;
+    padding: { left: 8, right: 8, top: 3, bottom: 3 };
+    border-width: 1;
 }

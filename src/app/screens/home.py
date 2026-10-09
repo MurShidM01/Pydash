@@ -95,7 +95,7 @@ def _hero_footer() -> Row:
             Container(
                 key="pd_hero_dot",
                 style={"width": 9, "height": 9, "borderRadius": 999,
-                       "bg": theme.on_brand(0.9)},
+                       "bg": theme.status_color(session.state)},
             ),
             Text(label, key="pd_hero_footer_text", class_="pd-hero-caption",
                  max_lines=1),
@@ -140,7 +140,7 @@ def _session_section():
 def _live_card() -> Container:
     stats = session.stats
     host = session.endpoint.describe() if session.endpoint else "—"
-    return card(key="pd_live_card", spacing=14, child=[
+    return card(key="pd_live_card", accent=True, spacing=14, child=[
         Row(
             key="pd_live_head",
             spacing=10,
@@ -150,8 +150,16 @@ def _live_card() -> Container:
                 status_dot(key="pd_live_dot", size=10),
                 Text(session.project_name, key="pd_live_name", class_="pd-h2",
                      expand=1, max_lines=1),
-                Text("LIVE", key="pd_live_tag", class_="pd-caption",
-                     style={"color": theme.success()}),
+                Container(
+                    key="pd_live_tag",
+                    class_="pd-tag",
+                    style={"bg": theme.status_surface("connected"),
+                           **theme.status_border("connected")},
+                    child=Text("LIVE", key="pd_live_tag_text",
+                               class_="pd-pill-text",
+                               style={"color": theme.success()},
+                               max_lines=1, overflow="clip"),
+                ),
             ],
         ),
         meta_list([

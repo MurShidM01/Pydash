@@ -77,7 +77,7 @@ def _bar() -> Container:
         key="pd_preview_bar_wrap",
         width="match",
         padding=theme.insets(left=16, right=8, top=6, bottom=6),
-        style={"bg": theme.background()},
+        style={**theme.chrome_border(bottom=True), "bg": theme.background()},
         child=Row(
             key="pd_preview_bar_row",
             spacing=6,

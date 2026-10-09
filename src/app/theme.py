@@ -15,18 +15,48 @@ from __future__ import annotations
 
 from pydrud import Border, Colors, EdgeInsets, Theme, Tokens
 
-from app.config import ACCENT, DANGER, INFO, SUCCESS, WARNING
+from app.config import (
+    ACCENT,
+    DANGER,
+    DEFAULT_PALETTE,
+    INFO,
+    PALETTES,
+    SUCCESS,
+    WARNING,
+)
 
 # ── Palette ──────────────────────────────────────────────────────────────────
 
 
-def seed_brand() -> None:
-    """(Re)build the palette from the Pydash brand colour.
+def palette_seed(name: str | None = None) -> str:
+    """The seed colour for a named palette (falls back to the brand accent)."""
+    for label, seed in PALETTES:
+        if label == (name or DEFAULT_PALETTE):
+            return seed
+    return ACCENT
+
+
+def seed_brand(name: str | None = None) -> None:
+    """(Re)build the palette from a named accent preset (default: the brand).
 
     Seeds light **and** dark palettes, so ``page.set_theme_mode`` and the
     framework's system-mode sync keep working without a second palette.
     """
-    Theme.seed(ACCENT)
+    Theme.seed(palette_seed(name))
+
+
+def apply_palette(page, name: str) -> None:
+    """Re-seed the running app from a named palette and repaint it live."""
+    try:
+        page.set_theme(palette_seed(name), animate=True)
+    except Exception:
+        seed_brand(name)
+        try:
+            from app import state
+
+            apply_theme_mode(page, str(state.theme_mode.value))
+        except Exception:
+            pass
 
 
 def configure_tokens() -> None:
@@ -132,14 +162,14 @@ def on_brand(opacity: float = 0.92) -> str:
 #: cards so the whole app speaks the same status language.
 
 _STATUS = {
-    "idle": lambda: text_secondary(),
+    "idle": danger,
     "connecting": warning,
     "handshaking": warning,
     "connected": success,
     "syncing": info,
     "reconnecting": warning,
     "failed": error,
-    "disconnected": lambda: text_secondary(),
+    "disconnected": danger,
 }
 
 
@@ -153,12 +183,141 @@ def status_surface(state: str) -> str:
     return Colors.with_opacity(status_color(state), 0.14)
 
 
+def tint(color: str, opacity: float = 0.14) -> str:
+    """A translucent wash of *color* — the background of tinted chips/badges."""
+    return Colors.with_opacity(color, opacity)
+
+
 # ── Reusable style fragments ─────────────────────────────────────────────────
 
 
-def hairline(color: str | None = None) -> dict:
-    """The 1dp outline Pydash cards and dividers are drawn with."""
-    return {"border": Border(color or outline(), 1).to_dict()}
+def hairline(color: str | None = None, width: float | None = None) -> dict:
+    """The uniform border Pydash cards and tiles are drawn with.
+
+    Defaults to :func:`border_color` / :func:`border_width`, so a card border
+    is exactly as strong as an outlined button's.
+    """
+    return {"border": Border(
+        color or border_color(),
+        width if width is not None else border_width(),
+    ).to_dict()}
+
+
+def border_color() -> str:
+    """The colour every Pydash border is drawn in.
+
+    Matches the outlined-button / outlined-input stroke — the brand colour at
+    45% — so borders track the palette (light/dark and any re-seed) instead of
+    a fixed grey. Change the theme and every border follows.
+    """
+    return Colors.with_opacity(primary(), 0.45)
+
+
+def border_width() -> float:
+    """Border width in dp — the same ``border_width``-based stroke as buttons.
+
+    Outlined buttons stroke at ``border_width * 1.4``; borders match so the
+    two read as one system.
+    """
+    return float(Tokens.border_width) * 1.4
+
+
+def edge_border(*, top: bool = False, bottom: bool = False, left: bool = False,
+                right: bool = False, color: str | None = None,
+                width: float | None = None) -> dict:
+    """A border on selected edges only — e.g. the app bar's bottom rule."""
+    return {"border": Border.only(
+        color=color or border_color(),
+        width=width if width is not None else border_width(),
+        top=top, bottom=bottom, left=left, right=right,
+    ).to_dict()}
+
+
+# ── Chrome (app bar / nav bar) rules ─────────────────────────────────────────
+
+#: The chrome rules are deliberately stronger than a card hairline: they are
+#: the only thing separating a bar from the content, so a faint line reads as
+#: "no line" on a phone. Still fully theme-derived — a deeper brand tint.
+CHROME_OPACITY = 0.75
+CHROME_WIDTH = 2.0
+
+
+def chrome_color() -> str:
+    """The colour of the app-bar / nav-bar rule (brand colour, deeper)."""
+    return Colors.with_opacity(primary(), CHROME_OPACITY)
+
+
+def chrome_border(*, top: bool = False, bottom: bool = False) -> dict:
+    """The edge rule that separates the chrome from the content.
+
+    Same brand hue as :func:`border_color` but at a higher opacity and roughly
+    twice the width, so the app bar and nav bar stay clearly defined at any
+    display density.
+    """
+    return edge_border(top=top, bottom=bottom,
+                       color=chrome_color(), width=CHROME_WIDTH)
+
+
+def chrome_outline() -> dict:
+    """A *uniform* chrome border around a rounded bar.
+
+    Unlike :func:`chrome_border` (per-side), a uniform border is stroked
+    straight onto the rounded shape, so it follows the corners — the bar reads
+    as an outlined card instead of a line that stops short at each corner. The
+    app bar / nav bar surface is white on a near-white page, so this outline is
+    what makes the rounded corners visible at all.
+    """
+    return {"border": Border(chrome_color(), CHROME_WIDTH).to_dict()}
+
+
+def chrome_bleed(*, top: bool = False, bottom: bool = False) -> dict:
+    """Pull a chrome bar 2dp past the screen edges on the outer sides.
+
+    The outline has to be uniform (a per-side border can't follow a rounded
+    corner — it fills the corner instead), so the bar is made slightly larger
+    than the screen and shifted outwards: the outer edges and their border hang
+    off-screen, and only the inner edge — with its corner arcs — stays visible.
+    """
+    bleed = -CHROME_WIDTH
+    margin = {"left": bleed, "right": bleed}
+    if top:
+        margin["top"] = bleed
+    if bottom:
+        margin["bottom"] = bleed
+    return {"margin": margin}
+
+
+def chrome_radius() -> float:
+    """Inner-corner radius of the app bar / nav bar — the card radius."""
+    return float(Tokens.radius_card)
+
+
+def rounded_edge(*, top: bool = False, bottom: bool = False,
+                 radius: float | None = None) -> dict:
+    """Per-corner radii that round *only* the requested edges.
+
+    ``bottom=True`` rounds the two bottom corners (an app bar's inner edge);
+    ``top=True`` rounds the two top corners (a bottom bar's inner edge). The
+    framework renders these natively through ``GradientDrawable.setCornerRadii``
+    and clips the view to the resulting outline, so the corners match a card.
+    """
+    corner = chrome_radius() if radius is None else float(radius)
+    return {
+        "borderTopLeftRadius": corner if top else 0,
+        "borderTopRightRadius": corner if top else 0,
+        "borderBottomLeftRadius": corner if bottom else 0,
+        "borderBottomRightRadius": corner if bottom else 0,
+    }
+
+
+def status_border(state: str, width: float = 1) -> dict:
+    """A border in the colour of *state* — outlines pills and status badges.
+
+    Pairs with :func:`status_surface`: the tint fills the capsule and this
+    outlines it, so a connected pill reads green on both counts and a failed
+    one red.
+    """
+    return {"border": Border(status_color(state), width).to_dict()}
 
 
 def caption_style() -> dict:
@@ -204,9 +363,12 @@ def apply_theme_mode(page, mode: str) -> None:
 
 
 __all__ = [
-    "apply_theme_mode", "background", "brand_gradient", "caption_style",
-    "code_style", "configure_tokens", "danger", "error", "hairline", "info",
-    "insets", "is_dark", "on_brand", "on_primary", "outline", "page_insets",
-    "primary", "seed_brand", "status_color", "status_surface", "success",
-    "surface", "surface_variant", "text", "text_secondary", "warning",
+    "apply_palette", "apply_theme_mode", "background", "border_color",
+    "border_width", "brand_gradient", "caption_style", "chrome_bleed",
+    "chrome_border", "chrome_color", "chrome_outline", "chrome_radius",
+    "code_style", "configure_tokens", "danger", "edge_border", "error",
+    "hairline", "info", "insets", "is_dark", "on_brand", "on_primary",
+    "outline", "page_insets", "palette_seed", "primary", "rounded_edge",
+    "seed_brand", "status_border", "status_color", "status_surface", "success",
+    "surface", "surface_variant", "text", "text_secondary", "tint", "warning",
 ]

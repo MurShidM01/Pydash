@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pydrud import (
     BottomNavigationBar,
+    Container,
     Icon,
     Icons,
     NavItem,
@@ -56,7 +57,12 @@ def shell_screen(page) -> None:
 
 def _app_bar(tab: int):
     if tab == 1:
-        return app_bar("Settings", key="pd_bar")
+        return app_bar(
+            "Settings",
+            leading=Icon(Icons.SETTINGS, key="pd_bar_mark", size=22,
+                         color=theme.primary()),
+            key="pd_bar",
+        )
     return app_bar(
         Text(APP_NAME, key="pd_bar_title", class_="pd-h2"),
         leading=Icon(Icons.PYTHON, key="pd_bar_mark", size=22,
@@ -70,17 +76,39 @@ def _app_bar(tab: int):
     )
 
 
-def _navigation(tab: int) -> BottomNavigationBar:
-    return BottomNavigationBar(
-        key="pd_nav",
-        items=[
-            NavItem("Home", icon=Icons.HOME, active_icon=Icons.HOME),
-            NavItem("Settings", icon=Icons.SETTINGS,
-                    active_icon=Icons.SETTINGS),
-        ],
-        selected=tab,
-        on_change=_on_tab_change,
-        haptic=True,
+def _navigation(tab: int) -> Container:
+    """The bottom navigation, dressed as a card along its top edge.
+
+    Pydrud's nav bar paints a *uniform* corner radius, so the bar itself is
+    drawn transparent and a container behind it supplies the surface with only
+    the two top corners rounded and a chrome outline stroked onto that shape.
+    The outline is uniform, so the surface bleeds 2dp off the sides and bottom
+    — that hides the outer edges and leaves the rule on the top edge alone.
+    """
+    return Container(
+        key="pd_nav_surface",
+        width="match",
+        style={"bg": theme.surface(), **theme.chrome_outline(),
+               **theme.rounded_edge(top=True), **theme.chrome_bleed(bottom=True)},
+        child=BottomNavigationBar(
+            key="pd_nav",
+            items=[
+                NavItem("Home", icon=Icons.HOME, active_icon=Icons.HOME),
+                NavItem("Settings", icon=Icons.SETTINGS,
+                        active_icon=Icons.SETTINGS),
+            ],
+            selected=tab,
+            on_change=_on_tab_change,
+            # The Material 3 pill behind the active tab reads as a shadowy
+            # rectangle; the coloured icon + label already mark the selection,
+            # so drop the pill and keep everything else.
+            indicator="none",
+            haptic=True,
+            # The wrapper draws the surface (and the safe-area inset), so the
+            # bar paints nothing and keeps to its content height.
+            bg="#00000000",
+            safe_area=False,
+        ),
     )
 
 

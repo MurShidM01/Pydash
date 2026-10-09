@@ -13,12 +13,17 @@ from __future__ import annotations
 
 from pydrud import State
 
+from app.config import DEFAULT_PALETTE
+
 # ── Shell ────────────────────────────────────────────────────────────────────
 #: Which of the two main destinations is showing (0=Home, 1=Settings).
 active_tab = State(0, name="active_tab")
 
 #: Preferred appearance: "system" | "light" | "dark".
 theme_mode = State("system", name="theme_mode")
+
+#: Preferred accent palette name (one of :data:`app.config.PALETTES`).
+theme_color = State(DEFAULT_PALETTE, name="theme_color")
 
 # ── Settings ─────────────────────────────────────────────────────────────────
 #: Try to re-establish a dropped preview session automatically.
@@ -67,5 +72,5 @@ __all__ = [
     "active_tab", "auto_reconnect", "bump", "connecting",
     "connecting_endpoint", "connecting_origin", "connection_failed",
     "haptics_enabled", "keep_awake", "last_endpoint", "recents",
-    "session_pulse", "theme_mode",
+    "session_pulse", "theme_color", "theme_mode",
 ]

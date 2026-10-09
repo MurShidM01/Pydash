@@ -14,10 +14,10 @@ import unittest
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, "src"))
 
-from pydrud import App  # noqa: E402
+from pydrud import App, Tokens  # noqa: E402
 from pydrud.testing import AppTester  # noqa: E402
 
-from app import state  # noqa: E402
+from app import state, theme  # noqa: E402
 from app.main import main  # noqa: E402
 from app.preview import session  # noqa: E402
 from app.preview.models import ConnectionState  # noqa: E402
@@ -111,6 +111,76 @@ class TestApp(unittest.TestCase):
         self.assertEqual(self.app.node("pd_hero_title").style["font"]["size"],
                          22)
 
+    def test_the_chrome_rules_and_tab_indicator(self):
+        # The active tab is marked by colour alone — the Material 3 pill
+        # ("shadow-like rectangle") is off.
+        self.assertEqual(self.app.node("pd_nav").props.get("indicator"), "none")
+
+        # The app bar and nav bar carry a stronger edge rule than a card, so
+        # the chrome stays clearly separated from the content. The rule is a
+        # *uniform* chrome border stroked onto the rounded surface, so it
+        # follows the corners instead of stopping short at each one.
+        expected = theme.chrome_outline()["border"]
+        for key in ("pd_bar._bar", "pd_nav_surface"):
+            border = self.app.node(key).style["border"]
+            self.assertEqual(border, expected)
+            self.assertEqual(border["bottom"]["color"], theme.chrome_color())
+            self.assertEqual(border["bottom"]["width"], theme.CHROME_WIDTH)
+
+        # The chrome corners are rounded like a card: only the inner edge of
+        # each bar is rounded (the app bar's bottom, the nav bar's top).
+        radius = theme.chrome_radius()
+        surface = self.app.node("pd_bar._bar")
+        self.assertEqual(surface.style["borderBottomLeftRadius"], radius)
+        self.assertEqual(surface.style["borderBottomRightRadius"], radius)
+        self.assertEqual(surface.style["borderTopLeftRadius"], 0)
+        self.assertEqual(surface.style["borderTopRightRadius"], 0)
+
+        nav_surface = self.app.node("pd_nav_surface")
+        self.assertEqual(nav_surface.style["borderTopLeftRadius"], radius)
+        self.assertEqual(nav_surface.style["borderTopRightRadius"], radius)
+        self.assertEqual(nav_surface.style["borderBottomLeftRadius"], 0)
+        self.assertEqual(nav_surface.style["borderBottomRightRadius"], 0)
+
+        # The outline is uniform, so the bar bleeds off the outer edges: the
+        # top/side border of the app bar and the bottom/side border of the nav
+        # bar hang off-screen, leaving the rule on the inner edge alone.
+        bleed = theme.chrome_bleed()["margin"]
+        bar_margin = self.app.node("pd_bar._bar").style["margin"]
+        self.assertEqual(bar_margin["left"], bleed["left"])
+        self.assertEqual(bar_margin["right"], bleed["right"])
+        self.assertEqual(bar_margin["top"], bleed["left"])
+        self.assertNotIn("bottom", bar_margin)
+
+        nav_margin = self.app.node("pd_nav_surface").style["margin"]
+        self.assertEqual(nav_margin["left"], bleed["left"])
+        self.assertEqual(nav_margin["right"], bleed["right"])
+        self.assertEqual(nav_margin["bottom"], bleed["left"])
+        self.assertNotIn("top", nav_margin)
+
+        # The nav bar is painted transparent so the rounded surface shows
+        # through, and it no longer adds its own safe-area inset (the wrapper
+        # does that).
+        self.assertEqual(self.app.node("pd_nav").props.get("bg"), "#00000000")
+        self.assertFalse(self.app.node("pd_nav").props.get("safeArea"))
+
+    def test_every_app_bar_reserves_a_touch_target_leading_slot(self):
+        # A bar's height follows its tallest child, so a screen whose only
+        # control is a small leading icon would get a shorter bar than one
+        # carrying an action button. Every leading is therefore wrapped in a
+        # slot sized to the shared touch target, which keeps Home, Scan and
+        # Settings pixel-identical.
+        target = float(Tokens.touch_target)
+        self.assertEqual(
+            self.app.node("pd_bar_leading_slot").style["minHeight"], target)
+
+        # Settings carries its own leading icon, in a slot of the same height.
+        self.app.device.change("pd_nav", 1)
+        self.app.settle()
+        self.assertTrue(self.app.exists("pd_bar_mark"))
+        self.assertEqual(
+            self.app.node("pd_bar_leading_slot").style["minHeight"], target)
+
     # ── theme ─────────────────────────────────────────────────────────────
 
     def test_the_theme_switch_updates_the_mode(self):
@@ -133,6 +203,42 @@ class TestApp(unittest.TestCase):
         self.app.device.change("pd_control_haptics", False)
         self.app.settle()
         self.assertFalse(state.haptics_enabled.value)
+
+    def test_the_palette_grid_is_complete_and_responsive(self):
+        from app.config import PALETTES
+        from app.screens.settings import _slug
+
+        self.app.device.change("pd_nav", 1)
+        self.app.settle()
+
+        # Every named palette is offered as a swatch.
+        for name, _seed in PALETTES:
+            with self.subTest(swatch=name):
+                self.assertTrue(self.app.exists(f"pd_palette_{_slug(name)}"))
+
+        # A phone lays the palette over two full rows, spread evenly so the
+        # gaps scale with the screen.
+        self.app.device.resize(360, 740)
+        self.app.settle()
+        for index in range(2):
+            row = self.app.node(f"pd_palette_row_{index}")
+            self.assertIsNotNone(row)
+            self.assertEqual(len(row.children), len(PALETTES) // 2)
+            self.assertEqual(row.style["mainAxisAlignment"], "space_evenly")
+        self.assertIsNone(self.app.node("pd_palette_row_2"))
+
+        # A narrow phone drops a column, so the grid wraps onto a third row
+        # instead of overflowing.
+        self.app.device.resize(320, 640)
+        self.app.settle()
+        self.assertIsNotNone(self.app.node("pd_palette_row_2"))
+
+        # A wide tablet fits the whole set on a single row.
+        self.app.device.resize(900, 1280)
+        self.app.settle()
+        single = self.app.node("pd_palette_row_0")
+        self.assertEqual(len(single.children), len(PALETTES))
+        self.assertIsNone(self.app.node("pd_palette_row_1"))
 
     # ── scanning & manual entry ───────────────────────────────────────────
 

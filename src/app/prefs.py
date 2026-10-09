@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from app import state, storage
+from app.config import DEFAULT_PALETTE
 from app.runtime import refresh
 
 __all__ = ["load", "save"]
@@ -24,6 +25,7 @@ __all__ = ["load", "save"]
 #: default used when nothing has been stored yet.
 _FIELDS = {
     "theme_mode": (state.theme_mode, "system"),
+    "theme_color": (state.theme_color, DEFAULT_PALETTE),
     "auto_reconnect": (state.auto_reconnect, True),
     "haptics_enabled": (state.haptics_enabled, True),
     "keep_awake": (state.keep_awake, False),
@@ -75,6 +77,13 @@ def _applier(name: str, target, page):
 
             try:
                 theme.apply_theme_mode(page, str(value))
+            except Exception:
+                pass
+        elif name == "theme_color":
+            from app import theme
+
+            try:
+                theme.apply_palette(page, str(value))
             except Exception:
                 pass
         refresh()

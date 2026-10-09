@@ -40,10 +40,12 @@ def status_pill(state: Optional[str] = None, *,
     current = state or session.state
     color = theme.status_color(current)
     label = STATE_LABELS.get(current, "Preview")
+    pill_style = {"bg": theme.status_surface(current)}
+    pill_style.update(theme.status_border(current))
     return Container(
         key=key,
         class_="pd-pill",
-        style={"bg": theme.status_surface(current)},
+        style=pill_style,
         child=Row(
             key=f"{key}_row",
             spacing=6,

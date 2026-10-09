@@ -18,6 +18,7 @@ from pydrud import (
     IconButton,
     Row,
     Text,
+    Tokens,
     Tooltip,
     Widget,
 )
@@ -49,16 +50,48 @@ def app_bar(
 ) -> AppBar:
     """A compact, consistent top bar shared by every Pydash screen.
 
-    ``density="compact"`` plus an explicit ``height`` means a bar with a
-    leading control and actions is exactly as tall as a title-only one.
+    The bar is dressed as a card along its bottom edge: the two bottom corners
+    are rounded and a chrome outline is stroked straight onto that shape, so the
+    border follows the corners. The outline is uniform, so the bar bleeds 2dp
+    off the top and sides — that hides the outer edges and leaves the rule on
+    the bottom edge alone.
+
+    The bar's height comes from its tallest child, not from ``height`` (which is
+    only a floor). A screen whose only control is a small icon would therefore
+    get a visibly shorter bar than one carrying an action button, so the leading
+    is wrapped in a full touch-target slot (:func:`_leading_slot`): every bar —
+    with or without a leading, whatever the icon's own size — ends up the same
+    height.
     """
     return AppBar(
         title=title,
-        leading=leading,
+        leading=_leading_slot(leading, key),
         actions=list(actions or []),
         density="compact",
         height=APP_BAR_HEIGHT,
+        divider=False,
+        style={**theme.chrome_outline(), **theme.rounded_edge(bottom=True),
+               **theme.chrome_bleed(top=True)},
         key=key,
+    )
+
+
+def _leading_slot(leading: Optional[Widget], key: str) -> Optional[Widget]:
+    """Reserve a full touch-target slot behind a bar's leading widget.
+
+    An icon is drawn at its own size (~22dp) — shorter than a bar's action
+    button — so a bar whose leading is the only control would collapse to the
+    title's height. Sizing the slot to the shared ``touch_target`` token makes
+    the leading and the actions equally tall, which is what keeps every app bar
+    pixel-identical.
+    """
+    if leading is None:
+        return None
+    return Container(
+        key=f"{key}_leading_slot",
+        alignment="center",
+        style={"minHeight": float(Tokens.touch_target)},
+        child=leading,
     )
 
 
@@ -94,6 +127,7 @@ def card(
     *,
     key: str = "pd_card",
     tint: bool = False,
+    accent: bool = False,
     spacing: float = 0,
     on_click=None,
 ) -> Container:
@@ -101,16 +135,20 @@ def card(
 
     The caller passes either one widget or a list of widgets, which are
     stacked in a :class:`~pydrud.Column` so callers never repeat the layout
-    boilerplate.
+    boilerplate. ``accent=True`` outlines the card in the brand colour — the
+    "featured"/active surface.
     """
     body: Widget = child
     if isinstance(child, (list, tuple)):
         body = Column(key=f"{key}_col", spacing=spacing,
                       children=list(child))
+    klass = "pd-card-accent" if accent else (
+        "pd-card-tint" if tint else "pd-card")
     surface = Container(
         key=key,
-        class_="pd-card-tint" if tint else "pd-card",
+        class_=klass,
         width="match",
+        style=theme.hairline(theme.primary() if accent else None),
         child=body,
     )
     if on_click is not None:
@@ -125,18 +163,24 @@ def section_header(
     action: Optional[Widget] = None,
     key: str = "pd_section",
 ) -> Column:
-    """A section title with an optional overline and a trailing action."""
+    """A section title with an optional overline and a trailing action.
+
+    A short brand-coloured bar leads the title so sections scan as distinct
+    blocks instead of blending into one another.
+    """
     children: list[Widget] = []
     if caption:
         children.append(Text(caption, key=f"{key}_caption",
                              class_="pd-caption", max_lines=1))
     row: list[Widget] = [
+        Container(key=f"{key}_accent", class_="pd-section-accent"),
         Text(title, key=f"{key}_title", class_="pd-h2", expand=1,
              max_lines=1),
     ]
     if action is not None:
         row.append(action)
-    children.append(Row(key=f"{key}_row", vertical_alignment="center",
+    children.append(Row(key=f"{key}_row", spacing=8,
+                        vertical_alignment="center",
                         main_axis_size="max", children=row))
     return Column(key=key, spacing=5, children=children)
 
@@ -185,12 +229,17 @@ def stat_tile(
     key: str = "pd_stat",
     accent: Optional[str] = None,
 ) -> Container:
-    """A compact metric: a bold number over a micro caption."""
-    number_style = {"color": accent} if accent else {}
+    """A compact metric: a bold number over a micro caption.
+
+    The number defaults to the brand colour so the counters read as a bright,
+    consistent set; pass ``accent`` to override it for a specific tile.
+    """
+    number_style = {"color": accent or theme.primary()}
     return Container(
         key=key,
         class_="pd-stat",
         expand=1,
+        style=theme.hairline(),
         child=Column(key=f"{key}_col", spacing=2, children=[
             Text(str(value), key=f"{key}_value", class_="pd-stat-num",
                  style=number_style, max_lines=1, overflow="clip"),
@@ -278,11 +327,14 @@ def notice_state(
         "info": theme.info, "success": theme.success,
         "warning": theme.warning, "danger": theme.danger,
     }.get(tone, theme.info)()
+    state = _tone_state(tone)
+    badge_style = {"bg": theme.status_surface(state)}
+    badge_style.update(theme.status_border(state))
     children: list[Widget] = [
         Container(
             key=f"{key}_badge",
             class_="pd-icon-badge",
-            style={"bg": theme.status_surface(_tone_state(tone))},
+            style=badge_style,
             child=Text(icon, key=f"{key}_glyph", size=20, color=accent),
         ),
         Text(title, key=f"{key}_title", class_="pd-h2", text_align="center"),
@@ -330,6 +382,7 @@ def step_row(
             Container(
                 key=f"{key}_num",
                 class_="pd-step-num",
+                style=theme.hairline(theme.primary()),
                 child=Text(str(index), key=f"{key}_num_text",
                            class_="pd-step-num-text"),
             ),
