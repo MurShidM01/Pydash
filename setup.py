@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="pydash",
-    version="1.0.2",
+    version="1.0.4",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     # pydrud is bundled locally in src/ — no pip download needed.

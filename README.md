@@ -58,10 +58,10 @@ your device, or take the universal build if you are unsure.
 
 | APK | Architecture | Use it for |
 | --- | --- | --- |
-| `pydash-1.0.2-universal.apk` | all | Any device — works everywhere (largest). |
-| `pydash-1.0.2-arm64-v8a.apk` | 64-bit ARM | Almost every phone and tablet since ~2016. |
-| `pydash-1.0.2-armeabi-v7a.apk` | 32-bit ARM | Older / budget devices. |
-| `pydash-1.0.2-x86_64.apk` | 64-bit x86 | Emulators and x86 tablets. |
+| `pydash-1.0.4-universal.apk` | all | Any device — works everywhere (largest). |
+| `pydash-1.0.4-arm64-v8a.apk` | 64-bit ARM | Almost every phone and tablet since ~2016. |
+| `pydash-1.0.4-armeabi-v7a.apk` | 32-bit ARM | Older / budget devices. |
+| `pydash-1.0.4-x86_64.apk` | 64-bit x86 | Emulators and x86 tablets. |
 
 The per-architecture APKs are roughly half the size of the universal one
 because each carries only its own architecture's native libraries.
