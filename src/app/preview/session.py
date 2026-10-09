@@ -80,6 +80,23 @@ class PreviewSession:
         self._refresh_lock = threading.Lock()
 
         self._closing = False
+        #: Bumped whenever a connect attempt starts or the session closes. A
+        #: worker that is still connecting captures the value it started with;
+        #: if the session moved on (the user disconnected, or started another
+        #: attempt) the token no longer matches and the worker's late result is
+        #: dropped instead of overwriting the live state — otherwise a stale
+        #: connect failure would resurrect a "connection failed" screen after
+        #: the user had already gone back to the dashboard.
+        self._generation = 0
+
+    def _new_attempt(self) -> int:
+        """Open a new attempt, invalidating any connect worker still in flight."""
+        self._generation += 1
+        return self._generation
+
+    def _is_current(self, generation: int) -> bool:
+        """Whether *generation* is still the live attempt."""
+        return generation == self._generation
 
     # ── queries ───────────────────────────────────────────────────────────
 
@@ -128,6 +145,7 @@ class PreviewSession:
         self.remote_title = ""
         self.dropped = False
         last_endpoint.value = endpoint.as_dict()
+        self._new_attempt()
         self._spawn_connect(initial=True)
 
     def reconnect(self) -> None:
@@ -138,24 +156,34 @@ class PreviewSession:
         self.error_code = None
         self.reconnect_attempt = 0
         self.dropped = False
+        self._new_attempt()
         self._spawn_connect(initial=True)
 
     def _spawn_connect(self, *, initial: bool) -> None:
+        generation = self._generation
+
         def worker():
             try:
-                self._run_client()
+                self._run_client(generation)
             except PreviewHandshakeError as exc:
-                self._set_state(ConnectionState.FAILED,
-                                error=exc.message, code=exc.code)
+                self._fail_attempt(generation, exc.message, exc.code)
             except (OSError, ConnectionError) as exc:
-                self._handle_link_failure(str(exc), initial=initial)
+                self._handle_link_failure(str(exc), initial=initial,
+                                          generation=generation)
             except Exception as exc:  # defensive: never kill the app
-                self._set_state(ConnectionState.FAILED, error=str(exc))
+                self._fail_attempt(generation, str(exc))
 
         threading.Thread(target=worker, daemon=True,
                          name="pydash-preview-connect").start()
 
-    def _run_client(self) -> None:
+    def _fail_attempt(self, generation: int, message: str,
+                      code: Optional[str] = None) -> None:
+        """Publish a failed attempt — unless it has been superseded."""
+        if not self._is_current(generation):
+            return
+        self._set_state(ConnectionState.FAILED, error=message, code=code)
+
+    def _run_client(self, generation: int) -> None:
         """Blocking connect + handshake on the worker thread."""
         client = PreviewClient(
             self.endpoint,
@@ -163,10 +191,18 @@ class PreviewSession:
             on_state=self._on_client_state,
             on_transaction=self._on_transaction,
             on_command=self._on_remote_command,
-            on_disconnect=self._on_link_lost,
+            on_disconnect=lambda reason: self._on_link_lost(reason, generation),
         )
+        if not self._is_current(generation):
+            return
         self.client = client
-        self.server = client.connect(metrics=_current_metrics())
+        server = client.connect(metrics=_current_metrics())
+        if not self._is_current(generation):
+            # The session moved on while we were connecting: drop the link
+            # rather than revive a screen the user has already left.
+            client.disconnect("superseded")
+            return
+        self.server = server
         self.was_live = True
         self.dropped = False
         self._set_state(ConnectionState.CONNECTED)
@@ -195,6 +231,9 @@ class PreviewSession:
     def disconnect(self, *, reason: Optional[str] = None) -> None:
         """Close the session and return Pydash to its own look."""
         self._closing = True
+        # Invalidate any connect worker still in flight, so its eventual
+        # failure cannot repaint a closed session as "connection failed".
+        self._new_attempt()
         self._teardown_client()
         self.tree.reset()
         self.stats = SessionStats()
@@ -262,15 +301,20 @@ class PreviewSession:
         from app.preview.renderer import handle_remote_command
         handle_remote_command(message)
 
-    def _on_link_lost(self, reason: Optional[str]) -> None:
+    def _on_link_lost(self, reason: Optional[str],
+                      generation: Optional[int] = None) -> None:
         if self._closing:
             return
-        self._handle_link_failure(reason or "connection lost", initial=False)
+        self._handle_link_failure(reason or "connection lost", initial=False,
+                                  generation=generation)
 
     # ── link failures & auto-reconnect ────────────────────────────────────
 
-    def _handle_link_failure(self, reason: str, *, initial: bool) -> None:
+    def _handle_link_failure(self, reason: str, *, initial: bool,
+                             generation: Optional[int] = None) -> None:
         if self._closing:
+            return
+        if generation is not None and not self._is_current(generation):
             return
         if initial:
             self._set_state(ConnectionState.FAILED,

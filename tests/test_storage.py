@@ -11,6 +11,7 @@ These cover the behaviour the settings/recents work introduced:
 
 import os
 import sys
+import threading
 import time
 import unittest
 
@@ -163,11 +164,24 @@ class TestTransactionCoalescing(unittest.TestCase):
         session._refresh_pending = False
 
     def _capture(self):
-        """Replace the module's ``on_ui`` with a synchronous recorder."""
+        """Replace the module's ``on_ui`` with a synchronous recorder.
+
+        ``refresh`` is stubbed too: the coalescing tests drain the queued flush
+        by hand, and a real ``refresh`` would repaint whichever app happened to
+        be bound by an earlier test file (a stopped one) — noise unrelated to
+        the scheduling behaviour under test.
+        """
         scheduled = []
-        original = session_mod.on_ui
+        original_ui = session_mod.on_ui
+        original_refresh = session_mod.refresh
         session_mod.on_ui = lambda fn, *a, **k: scheduled.append((fn, a, k))
-        self.addCleanup(lambda: setattr(session_mod, "on_ui", original))
+        session_mod.refresh = lambda *a, **k: None
+
+        def restore():
+            session_mod.on_ui = original_ui
+            session_mod.refresh = original_refresh
+
+        self.addCleanup(restore)
         return scheduled
 
     def test_a_burst_of_transactions_schedules_one_rebuild(self):
@@ -354,6 +368,38 @@ class TestPreviewExit(_Harness):
 
         tester.tap("pd_preview_exit")
         self.assertEqual(router.current_route, "shell")
+        self.assertEqual(session.state, ConnectionState.DISCONNECTED)
+
+    def test_a_superseded_connect_cannot_repaint_a_closed_session(self):
+        # A connect worker that is still in flight when the user disconnects
+        # must not publish its late failure over the closed session — that
+        # would resurrect a "connection failed" screen on the dashboard. The
+        # worker is held open here so the disconnect lands while it is still
+        # connecting, which is the exact race the flaky suite kept hitting.
+        tester = self._boot(prefs_get=lambda msg: None)
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_connect(generation):
+            started.set()
+            release.wait(2)
+            raise OSError("connection refused")
+
+        original = session._run_client
+        session._run_client = slow_connect
+        self.addCleanup(setattr, session, "_run_client", original)
+
+        session.connect(_endpoint())
+        self.assertTrue(started.wait(1))
+        worker = next(t for t in threading.enumerate()
+                      if t.name == "pydash-preview-connect")
+
+        session.disconnect()
+        release.set()
+        worker.join(2)
+        tester.settle()
+
         self.assertEqual(session.state, ConnectionState.DISCONNECTED)
 
 

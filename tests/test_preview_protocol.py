@@ -290,6 +290,14 @@ class TestPreviewSession(unittest.TestCase):
             time.sleep(0.01)
         return False
 
+    def _wait_for(self, predicate, timeout=3.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.01)
+        return False
+
     def test_a_session_connects_and_renders_the_project(self):
         self.session.connect(_endpoint(self.server.port))
         self.assertTrue(self.server.wait_for(
@@ -300,8 +308,12 @@ class TestPreviewSession(unittest.TestCase):
         self.server.send(_snapshot(1, _tree()))
         self.assertTrue(self.server.wait_for(
             lambda msgs: any(m.get("type") == "render_ack" for m in msgs)))
+        # The client writes the ack to the socket *before* it counts the
+        # transaction, so the ack does not imply the counter has advanced —
+        # wait for the counter itself rather than racing the reader thread.
+        self.assertTrue(self._wait_for(
+            lambda: self.session.stats.snapshots == 1))
         self.assertEqual(self.session.project_name, "Demo App")
-        self.assertEqual(self.session.stats.snapshots, 1)
 
     def test_a_session_disconnects_cleanly(self):
         self.session.connect(_endpoint(self.server.port))
